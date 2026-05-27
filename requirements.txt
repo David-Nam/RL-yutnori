@@ -1,0 +1,9 @@
+numpy
+pytest
+gymnasium
+torch
+stable-baselines3
+sb3-contrib
+pandas
+matplotlib
+tqdm
