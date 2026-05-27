@@ -83,7 +83,9 @@
 
 - `sb3-contrib`의 `MaskablePPO` 사용.
 - `action_masks()`를 통해 invalid action masking 적용.
-- 초기 opponent는 baseline, 이후 frozen snapshot pool 추가.
+- M6 1차 구현은 baseline opponent 학습으로 시작한다.
+- 세부 계획은 `docs/MILESTONE_M6_PPO_PLAN.md`를 따른다.
+- frozen snapshot pool과 `PPO vs PPO`는 1차 구현 이후 별도 실험으로 남긴다.
 - 검증:
   - 짧은 학습 smoke test 완료.
   - Maskable evaluation 루프에서 illegal action 0건.
