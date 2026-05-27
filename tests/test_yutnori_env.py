@@ -1,0 +1,221 @@
+import numpy as np
+import pytest
+
+from yutnori.core import (
+    ACTION_SIZE,
+    Cell,
+    GameState,
+    Position,
+    Route,
+    YutResult,
+    encode_action,
+)
+from yutnori.env import OBSERVATION_SIZE, POSITION_WAITING, YutnoriEnv
+
+
+class SequenceSampler:
+    def __init__(self, results):
+        self.results = list(results)
+        self.index = 0
+
+    def sample(self):
+        if self.index >= len(self.results):
+            raise AssertionError("SequenceSampler exhausted")
+        result = self.results[self.index]
+        self.index += 1
+        return result
+
+
+def first_legal_action(_state: GameState, legal_actions: list[int]) -> int:
+    return legal_actions[0]
+
+
+def sequence_factory(results):
+    def factory(_rng):
+        return SequenceSampler(results)
+
+    return factory
+
+
+def test_reset_returns_vector_observation_and_mask_for_learner_turn():
+    env = YutnoriEnv(
+        starting_player=0,
+        yut_sampler_factory=sequence_factory([YutResult.GAE]),
+    )
+
+    obs, info = env.reset(seed=123)
+
+    assert obs.shape == (OBSERVATION_SIZE,)
+    assert obs.dtype == np.float32
+    assert env.observation_space.contains(obs)
+    assert info["starting_player"] == 0
+    assert info["initial_rolls"] == ["GAE"]
+    mask = env.action_masks()
+    assert mask.dtype == np.bool_
+    assert mask.shape == (ACTION_SIZE,)
+    assert np.flatnonzero(mask).tolist() == [
+        encode_action(0, YutResult.GAE),
+        encode_action(1, YutResult.GAE),
+        encode_action(2, YutResult.GAE),
+        encode_action(3, YutResult.GAE),
+    ]
+
+
+def test_reset_seed_reproducibly_returns_same_initial_observation_and_mask():
+    first_env = YutnoriEnv(starting_player=0)
+    second_env = YutnoriEnv(starting_player=0)
+
+    first_obs, first_info = first_env.reset(seed=77)
+    second_obs, second_info = second_env.reset(seed=77)
+
+    np.testing.assert_array_equal(first_obs, second_obs)
+    np.testing.assert_array_equal(first_env.action_masks(), second_env.action_masks())
+    assert first_info["initial_rolls"] == second_info["initial_rolls"]
+
+
+def test_observation_is_from_learner_perspective():
+    env = YutnoriEnv(
+        learner_player=1,
+        starting_player=1,
+        yut_sampler_factory=sequence_factory([YutResult.DO]),
+    )
+    obs, _ = env.reset(seed=3)
+
+    assert obs[0:4].tolist() == [POSITION_WAITING] * 4
+    assert obs[4:8].tolist() == [0.0] * 4
+
+
+def test_action_masks_respect_stack_representative():
+    env = YutnoriEnv(
+        starting_player=0,
+        yut_sampler_factory=sequence_factory([YutResult.DO]),
+    )
+    env.reset(seed=1)
+    assert env.state is not None
+    env.state.pieces[0][0] = Position.at(Route.OUTER, 1)
+    env.state.pieces[0][1] = Position.at(Route.OUTER, 1)
+    env.state.set_pool(YutResult.DO)
+
+    legal_actions = np.flatnonzero(env.action_masks()).tolist()
+
+    assert encode_action(0, YutResult.DO) in legal_actions
+    assert encode_action(1, YutResult.DO) not in legal_actions
+
+
+def test_step_applies_learner_action_and_returns_next_decision_state():
+    env = YutnoriEnv(
+        starting_player=0,
+        yut_sampler_factory=sequence_factory(
+            [YutResult.GAE, YutResult.DO, YutResult.GEOL]
+        ),
+    )
+    env.reset(seed=5)
+
+    obs, reward, terminated, truncated, info = env.step(
+        encode_action(0, YutResult.GAE)
+    )
+
+    assert obs.shape == (OBSERVATION_SIZE,)
+    assert reward == 0.0
+    assert not terminated
+    assert not truncated
+    assert info["learner_event"]["yut_result"] == "GAE"
+    assert info["learner_event"]["turn_changed"]
+    assert len(info["opponent_events"]) == 1
+    assert info["current_player"] == 0
+    assert np.flatnonzero(env.action_masks()).tolist() == [
+        encode_action(0, YutResult.GEOL),
+        encode_action(1, YutResult.GEOL),
+        encode_action(2, YutResult.GEOL),
+        encode_action(3, YutResult.GEOL),
+    ]
+
+
+def test_reset_auto_advances_opponent_until_learner_turn():
+    env = YutnoriEnv(
+        starting_player=1,
+        opponent_policy=first_legal_action,
+        yut_sampler_factory=sequence_factory([YutResult.DO, YutResult.GEOL]),
+    )
+
+    _obs, info = env.reset(seed=9)
+
+    assert len(info["opponent_events"]) == 1
+    assert info["opponent_events"][0]["actor"] == 1
+    assert info["current_player"] == 0
+    assert np.flatnonzero(env.action_masks()).tolist() == [
+        encode_action(0, YutResult.GEOL),
+        encode_action(1, YutResult.GEOL),
+        encode_action(2, YutResult.GEOL),
+        encode_action(3, YutResult.GEOL),
+    ]
+
+
+def test_illegal_action_raises_value_error():
+    env = YutnoriEnv(
+        starting_player=0,
+        yut_sampler_factory=sequence_factory([YutResult.DO]),
+    )
+    env.reset(seed=1)
+
+    with pytest.raises(ValueError):
+        env.step(encode_action(0, YutResult.GAE))
+
+
+def test_terminal_reward_when_learner_wins():
+    env = YutnoriEnv(
+        starting_player=0,
+        yut_sampler_factory=sequence_factory([YutResult.GAE]),
+    )
+    env.reset(seed=1)
+    assert env.state is not None
+    for piece_id in range(3):
+        env.state.pieces[0][piece_id] = Position.finished()
+    env.state.pieces[0][3] = Position.at(Route.OUTER, 19)
+    env.state.set_pool(YutResult.GAE)
+
+    _obs, reward, terminated, truncated, info = env.step(
+        encode_action(3, YutResult.GAE)
+    )
+
+    assert reward == 1.0
+    assert terminated
+    assert not truncated
+    assert info["winner"] == 0
+    assert not env.action_masks().any()
+
+
+def test_gymnasium_spaces_accept_reset_outputs():
+    env = YutnoriEnv(starting_player=0)
+
+    obs, info = env.reset(seed=10)
+
+    assert env.action_space.n == ACTION_SIZE
+    assert env.observation_space.contains(obs)
+    assert isinstance(info, dict)
+
+
+def test_mask_aware_random_rollouts_finish_without_illegal_actions():
+    completed = 0
+    for seed in range(100):
+        env = YutnoriEnv(starting_player=0)
+        obs, _info = env.reset(seed=seed)
+        assert env.observation_space.contains(obs)
+        terminated = False
+        for _step in range(5000):
+            mask = env.action_masks()
+            if terminated:
+                break
+            if not mask.any():
+                raise AssertionError("non-terminal learner state has no legal actions")
+            action = int(np.flatnonzero(mask)[0])
+            obs, _reward, terminated, truncated, _info = env.step(action)
+            assert not truncated
+            assert env.observation_space.contains(obs)
+            if terminated:
+                completed += 1
+                break
+        else:
+            raise AssertionError("rollout did not finish within safety bound")
+
+    assert completed == 100
