@@ -314,7 +314,9 @@ python -m pytest
 - baseline별 평가 command 정리
 - 산출물 저장 구조 정리
 - tmux 기반 실행 절차 정리
+- tqdm 기반 진행률/ETA 표시 정리
 - 장기 학습 중 중간 모델 보존을 위한 checkpoint 옵션 정리
+- mask-aware 평가 기반 선택적 early stopping 정리
 
 예상 파일:
 
@@ -354,6 +356,8 @@ python scripts/train_ppo.py \
 - 동일 command를 seed만 바꿔 반복 실행할 수 있어야 한다.
 - run directory가 덮어쓰기 위험 없이 생성되어야 한다.
 - 짧은 checkpoint smoke에서 checkpoint zip이 생성되어야 한다.
+- 짧은 progress smoke에서 tqdm 진행률이 표시되어야 한다.
+- 짧은 early stopping smoke에서 목표 timestep 전에 학습이 중단되어야 한다.
 - 평가 결과가 JSON 또는 CSV로 남아야 한다.
 - 장기 학습 시작/모니터링/평가 방법이 문서화되어야 한다.
 

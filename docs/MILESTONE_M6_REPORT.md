@@ -33,6 +33,8 @@ M6에서는 `sb3-contrib`의 `MaskablePPO`를 기존 `YutnoriEnv`에 연결했�
   - `learn(..., use_masking=True)` 사용
   - `config.json`, `model.zip`, `summary.json`, 학습 전후 Random 평가 JSON 저장
   - 장기 학습용 checkpoint 저장 옵션 추가
+  - 장기 학습 진행률과 ETA 확인용 `tqdm` progress bar 추가
+  - 학습 중 mask-aware 평가 기반 선택적 early stopping 추가
 - `scripts/evaluate_ppo.py`
   - 저장된 `MaskablePPO` 모델 로드
   - opponent별 mask-aware 평가 JSON 저장
@@ -86,6 +88,14 @@ M6에서는 `sb3-contrib`의 `MaskablePPO`를 기존 `YutnoriEnv`에 연결했�
 - `--overwrite`: 기존 run directory가 비어 있지 않을 때 명시적으로 덮어쓰기
 - `--tensorboard`: TensorBoard logging 사용
 - `--verbose`: SB3 verbosity
+- `--no-progress-bar`: `tqdm` progress bar 비활성화
+- `--early-stop-eval-freq`: 학습 중 평가 주기
+- `--early-stop-eval-episodes`: early stopping 판단용 평가 판수
+- `--early-stop-opponent`: early stopping 평가 opponent
+- `--early-stop-win-rate`: 지정 승률 도달 시 중단
+- `--early-stop-patience`: 지정 횟수만큼 개선이 없으면 중단
+- `--early-stop-min-delta`: 개선으로 인정할 최소 승률 차이
+- `--early-stop-min-timesteps`: 이 timestep 전에는 중단하지 않음
 
 초기 구현에서는 TensorBoard log path를 항상 넘겼으나, 현재 `requirements.txt`에 `tensorboard`가 없어서 학습 시작 전에 실패했다. M6 필수 검증은 TensorBoard가 아니라 PPO 학습/저장/평가이므로, TensorBoard는 `--tensorboard`를 지정할 때만 켜지도록 수정했다.
 
@@ -108,11 +118,20 @@ model.predict(obs, deterministic=True, action_masks=mask)
 - `scripts/train_ppo.py`에 `--checkpoint-freq` 추가
 - `scripts/train_ppo.py`에 `--checkpoint-dir` 추가
 - checkpoint 저장 경로와 save frequency를 `config.json`, `summary.json`에 기록
+- 기본 실행에서 `tqdm` progress bar로 현재 env timestep, 처리 속도, ETA 표시
+- `--no-progress-bar`로 동적 progress bar 비활성화 가능
+- 학습 중 주기적으로 mask-aware 평가를 수행해 승률 threshold 또는 patience 기준으로 중단 가능
 - `docs/MILESTONE_M6_LONG_TRAINING_GUIDE.md` 작성
 
 `--checkpoint-freq`는 env timestep 기준이다. `n_envs > 1`에서는 SB3 callback 호출 횟수와 env timestep 수가 다르므로, 스크립트 내부에서 `checkpoint_freq / n_envs` 기준으로 callback save frequency를 계산한다.
 
 장기 학습 run directory는 기본적으로 덮어쓰지 않는다. `--overwrite`를 명시하지 않으면 비어 있지 않은 run directory에서 실패하므로, 기존 실험 산출물을 실수로 덮어쓰는 일을 막는다.
+
+`tqdm`은 기본값으로 켜진다. tmux pane에서는 진행률과 ETA를 즉시 볼 수 있다. `tee` 로그 파일에는 동적 progress bar의 carriage return이 포함될 수 있으므로, 깔끔한 파일 로그가 필요한 run에서는 `--no-progress-bar`와 `--verbose 1`을 함께 사용할 수 있다.
+
+early stopping은 일반 SB3 `EvalCallback`이 아니라 기존 `evaluate_maskable_policy()`를 사용하는 custom callback으로 구현했다. 이 방식은 평가 시에도 매 decision마다 `model.predict(..., action_masks=mask)`를 호출하므로 M6의 action mask 요구사항을 유지한다.
+
+early stopping은 수렴을 수학적으로 증명하지 않는다. stochastic game에서 평가 판수가 작으면 운에 따라 중단될 수 있으므로, 장기 학습 중 판단에는 `1000`판 수준을 사용하고 최종 보고용 평가는 학습 종료 후 opponent별 `10000`판 이상을 별도로 실행한다.
 
 ## 4. 검증 환경
 
@@ -520,6 +539,8 @@ Use --overwrite or choose a new --run-dir.
 
 - 장기 학습 전 환경 점검 command가 포함되어 있는지 확인
 - `tmux` 세션 생성, detach, attach 방법이 포함되어 있는지 확인
+- `tqdm` progress bar로 진행률과 ETA를 확인할 수 있다고 명시되어 있는지 확인
+- 파일 로그를 깔끔하게 남길 때 `--no-progress-bar`를 쓸 수 있다고 명시되어 있는지 확인
 - stdout/stderr log를 run directory 밖의 `logs/ppo/`에 저장하도록 안내하는지 확인
 - seed별 run directory naming 규칙이 있는지 확인
 - `--checkpoint-freq`를 포함한 장기 학습 command가 있는지 확인
@@ -531,6 +552,103 @@ Use --overwrite or choose a new --run-dir.
 
 - 위 항목을 모두 문서에 반영했다.
 - 장기 학습 자체는 사용자가 별도 `tmux` 세션에서 실행할 예정이므로, 이 보고서에서는 장기 실험 결과를 기록하지 않았다.
+
+### 5.9 tqdm 진행률 표시 검증
+
+추가 확인일: 2026-05-28
+
+검증 목적:
+
+- 장기 학습 중 학습이 멈춘 것처럼 보이지 않도록 진행률이 표시되는지 확인한다.
+- progress bar가 checkpoint callback과 함께 동작하는지 확인한다.
+- progress bar 설정이 `config.json`에 기록되는지 확인한다.
+
+검증 명령:
+
+```bash
+.venv/bin/python scripts/train_ppo.py \
+  --total-timesteps 128 \
+  --seed 8 \
+  --opponent random \
+  --n-envs 1 \
+  --device cpu \
+  --n-steps 64 \
+  --batch-size 32 \
+  --checkpoint-freq 64 \
+  --run-dir runs/ppo_progress_smoke \
+  --eval-episodes 0 \
+  --overwrite
+```
+
+검증 내용:
+
+- `PPO training` progress bar가 출력되는지 확인
+- progress bar가 `128/128`까지 도달하는지 확인
+- checkpoint zip과 최종 `model.zip`이 함께 생성되는지 확인
+- `config.json`에 `"progress_bar": true`가 기록되는지 확인
+- `--no-progress-bar` 실행 시 progress bar가 출력되지 않고 `"progress_bar": false`가 기록되는지 확인
+
+결과:
+
+- `tqdm` progress bar 출력 확인
+- `128/128` 완료 표시 확인
+- checkpoint zip 생성 확인
+- 최종 `model.zip` 생성 확인
+- `config.json`의 `"progress_bar": true` 기록 확인
+- `--no-progress-bar` smoke에서 progress bar 미출력 및 `"progress_bar": false` 기록 확인
+
+이 검증 역시 진행률 표시 연결성 확인용이며, 학습 성능을 판단하지 않는다.
+
+### 5.10 Early Stopping 검증
+
+추가 확인일: 2026-05-28
+
+검증 목적:
+
+- 학습 중 mask-aware 평가 callback이 실행되는지 확인한다.
+- 평가 결과가 `eval_during_training.jsonl`에 저장되는지 확인한다.
+- stop 조건이 만족되면 `total_timesteps` 전에 `learn()`이 중단되는지 확인한다.
+- 중단 후에도 최종 `model.zip`과 `summary.json`이 저장되는지 확인한다.
+
+검증 명령:
+
+```bash
+.venv/bin/python scripts/train_ppo.py \
+  --total-timesteps 512 \
+  --seed 10 \
+  --opponent random \
+  --n-envs 1 \
+  --device cpu \
+  --n-steps 64 \
+  --batch-size 32 \
+  --early-stop-eval-freq 64 \
+  --early-stop-eval-episodes 1 \
+  --early-stop-win-rate 0.0 \
+  --run-dir runs/ppo_early_stop_smoke \
+  --eval-episodes 0 \
+  --overwrite
+```
+
+검증 내용:
+
+- `--early-stop-eval-freq 64` 시점에 평가가 실행되는지 확인
+- 평가가 `action_masks`를 사용하는 기존 `evaluate_maskable_policy()` 경로로 실행되는지 확인
+- `win_rate >= 0.0` 조건으로 즉시 중단되는지 확인
+- `summary.json`의 `target_total_timesteps`와 `trained_timesteps`가 다르게 기록되는지 확인
+- `eval_during_training.jsonl`에 stop reason과 illegal action count가 기록되는지 확인
+
+결과:
+
+- 첫 평가가 `timesteps=64`에서 실행됨
+- stop reason: `win_rate>=0.0`
+- `target_total_timesteps`: `512`
+- `trained_timesteps`: `64`
+- `illegal_action_count`: `0`
+- `model.zip` 생성 확인
+- `summary.json` 생성 확인
+- `eval_during_training.jsonl` 생성 확인
+
+이 검증은 early stopping 연결성 확인용으로 threshold를 일부러 `0.0`으로 둔 것이다. 실제 장기 학습에서는 더 높은 threshold, 최소 timestep, 충분한 평가 판수를 설정해야 한다.
 
 ## 6. 산출물
 
@@ -563,6 +681,23 @@ Use --overwrite or choose a new --run-dir.
 - `runs/ppo_checkpoint_smoke/summary.json`
 - `runs/ppo_checkpoint_smoke/checkpoints/<checkpoint>.zip`
 
+추가 progress smoke 산출물:
+
+- `runs/ppo_progress_smoke/config.json`
+- `runs/ppo_progress_smoke/model.zip`
+- `runs/ppo_progress_smoke/summary.json`
+- `runs/ppo_progress_smoke/checkpoints/<checkpoint>.zip`
+- `runs/ppo_no_progress_smoke/config.json`
+- `runs/ppo_no_progress_smoke/model.zip`
+- `runs/ppo_no_progress_smoke/summary.json`
+
+추가 early stopping smoke 산출물:
+
+- `runs/ppo_early_stop_smoke/config.json`
+- `runs/ppo_early_stop_smoke/model.zip`
+- `runs/ppo_early_stop_smoke/summary.json`
+- `runs/ppo_early_stop_smoke/eval_during_training.jsonl`
+
 ## 7. 완료 기준 점검
 
 - `scripts/train_ppo.py` 구현: 완료
@@ -576,6 +711,8 @@ Use --overwrite or choose a new --run-dir.
 - `docs/MILESTONE_M6_REPORT.md` 상세 검증 결과 저장: 완료
 - `docs/MILESTONE_M6_LONG_TRAINING_GUIDE.md` 장기 학습 실행 절차 저장: 완료
 - 장기 학습용 checkpoint 옵션 구현 및 smoke 검증: 완료
+- 장기 학습용 `tqdm` 진행률 표시 구현 및 smoke 검증: 완료
+- 장기 학습용 선택적 early stopping 구현 및 smoke 검증: 완료
 
 ## 8. 보류 및 후속 확인
 
