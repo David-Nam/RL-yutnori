@@ -12,6 +12,7 @@
 - run directory와 log 규칙
 - seed별 학습 command
 - tqdm 진행률과 ETA 확인 방법
+- 학습 중 episode 통계 확인 방법
 - checkpoint 저장 설정
 - 선택적 early stopping 설정
 - baseline opponent별 평가 command
@@ -137,7 +138,14 @@ python -u scripts/train_ppo.py \
   2>&1 | tee "${LOG_DIR}/${RUN_NAME}.log"
 ```
 
-기본 실행에서는 `tqdm` 진행률 표시가 켜진다. 학습 중 현재 env timestep, 처리 속도, ETA를 같은 tmux pane에서 볼 수 있다.
+기본 실행에서는 `tqdm` 진행률 표시가 켜진다. 학습 중 현재 env timestep, 처리 속도, ETA와 함께 완료 episode 통계를 같은 tmux pane에서 볼 수 있다.
+
+진행바 postfix 의미:
+
+- `eps`: 학습 중 완료된 episode 수
+- `ep_ts`: 완료 episode당 평균 learner timestep 수
+- `ep/100k`: 100000 learner timestep당 완료 episode 수
+- `ep_wr`: 학습 중 완료 episode 기준 learner 승률
 
 tmux detach:
 
@@ -168,6 +176,23 @@ watch -n 5 nvidia-smi
 find runs/ppo/random_seed_0_1m_nenv16 -maxdepth 2 -type f | sort
 python -m json.tool runs/ppo/random_seed_0_1m_nenv16/config.json >/dev/null
 ```
+
+학습 중 완료된 episode 통계 확인:
+
+```bash
+tail -n 5 runs/ppo/random_seed_0_1m_nenv16/episodes.jsonl
+```
+
+`episodes.jsonl`은 완료된 게임 한 판마다 다음 정보를 남긴다.
+
+- `timesteps`: 해당 episode가 끝난 시점의 learner timestep
+- `learner_decisions`: learner가 그 episode에서 선택한 action 수
+- `turn_count`: 게임 전체 turn 수
+- `decision_count`: 게임 전체 decision 수
+- `winner`
+- `learner_win`
+
+이 파일을 보면 `total_timesteps=1000000`이 실제로 몇 판 정도의 게임 경험에 해당하는지 추정할 수 있다. 최종 `summary.json`에도 `episode_stats`가 들어간다.
 
 checkpoint 확인:
 

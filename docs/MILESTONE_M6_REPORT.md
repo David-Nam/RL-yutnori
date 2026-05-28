@@ -35,6 +35,7 @@ M6에서는 `sb3-contrib`의 `MaskablePPO`를 기존 `YutnoriEnv`에 연결했�
   - 장기 학습용 checkpoint 저장 옵션 추가
   - 장기 학습 진행률과 ETA 확인용 `tqdm` progress bar 추가
   - 학습 중 mask-aware 평가 기반 선택적 early stopping 추가
+  - 학습 중 완료 episode 통계 JSONL 기록 추가
 - `scripts/evaluate_ppo.py`
   - 저장된 `MaskablePPO` 모델 로드
   - opponent별 mask-aware 평가 JSON 저장
@@ -118,20 +119,23 @@ model.predict(obs, deterministic=True, action_masks=mask)
 - `scripts/train_ppo.py`에 `--checkpoint-freq` 추가
 - `scripts/train_ppo.py`에 `--checkpoint-dir` 추가
 - checkpoint 저장 경로와 save frequency를 `config.json`, `summary.json`에 기록
-- 기본 실행에서 `tqdm` progress bar로 현재 env timestep, 처리 속도, ETA 표시
+- 기본 실행에서 `tqdm` progress bar로 현재 env timestep, 처리 속도, ETA, 완료 episode 통계 표시
 - `--no-progress-bar`로 동적 progress bar 비활성화 가능
 - 학습 중 주기적으로 mask-aware 평가를 수행해 승률 threshold 또는 patience 기준으로 중단 가능
+- 완료된 episode마다 `episodes.jsonl`에 learner decision 수, turn 수, 전체 decision 수, 승패 기록
 - `docs/MILESTONE_M6_LONG_TRAINING_GUIDE.md` 작성
 
 `--checkpoint-freq`는 env timestep 기준이다. `n_envs > 1`에서는 SB3 callback 호출 횟수와 env timestep 수가 다르므로, 스크립트 내부에서 `checkpoint_freq / n_envs` 기준으로 callback save frequency를 계산한다.
 
 장기 학습 run directory는 기본적으로 덮어쓰지 않는다. `--overwrite`를 명시하지 않으면 비어 있지 않은 run directory에서 실패하므로, 기존 실험 산출물을 실수로 덮어쓰는 일을 막는다.
 
-`tqdm`은 기본값으로 켜진다. tmux pane에서는 진행률과 ETA를 즉시 볼 수 있다. `tee` 로그 파일에는 동적 progress bar의 carriage return이 포함될 수 있으므로, 깔끔한 파일 로그가 필요한 run에서는 `--no-progress-bar`와 `--verbose 1`을 함께 사용할 수 있다.
+`tqdm`은 기본값으로 켜진다. tmux pane에서는 진행률, ETA, 완료 episode 수, episode당 평균 learner timestep, 100000 timestep당 episode 수, 학습 episode 승률을 즉시 볼 수 있다. `tee` 로그 파일에는 동적 progress bar의 carriage return이 포함될 수 있으므로, 깔끔한 파일 로그가 필요한 run에서는 `--no-progress-bar`와 `--verbose 1`을 함께 사용할 수 있다.
 
 early stopping은 일반 SB3 `EvalCallback`이 아니라 기존 `evaluate_maskable_policy()`를 사용하는 custom callback으로 구현했다. 이 방식은 평가 시에도 매 decision마다 `model.predict(..., action_masks=mask)`를 호출하므로 M6의 action mask 요구사항을 유지한다.
 
 early stopping은 수렴을 수학적으로 증명하지 않는다. stochastic game에서 평가 판수가 작으면 운에 따라 중단될 수 있으므로, 장기 학습 중 판단에는 `1000`판 수준을 사용하고 최종 보고용 평가는 학습 종료 후 opponent별 `10000`판 이상을 별도로 실행한다.
+
+`total_timesteps`는 학습 중 learner가 action을 선택한 decision step 수이고, episode는 게임 한 판이다. episode 길이는 고정되어 있지 않으므로 같은 `total_timesteps`에서도 완료된 episode 수는 정책과 운에 따라 달라질 수 있다. 이를 판단하기 위해 학습 중 완료 episode 통계를 `episodes.jsonl`, `summary.json`의 `episode_stats`, `tqdm` progress bar, early-stop eval 로그에 기록한다.
 
 ## 4. 검증 환경
 
@@ -560,6 +564,7 @@ Use --overwrite or choose a new --run-dir.
 검증 목적:
 
 - 장기 학습 중 학습이 멈춘 것처럼 보이지 않도록 진행률이 표시되는지 확인한다.
+- 진행률 로그에서 완료 episode 수와 episode당 learner timestep 추정치를 확인할 수 있는지 확인한다.
 - progress bar가 checkpoint callback과 함께 동작하는지 확인한다.
 - progress bar 설정이 `config.json`에 기록되는지 확인한다.
 
@@ -583,6 +588,7 @@ Use --overwrite or choose a new --run-dir.
 검증 내용:
 
 - `PPO training` progress bar가 출력되는지 확인
+- progress bar postfix에 `eps`, `ep_ts`, `ep/100k`, `ep_wr`가 출력되는지 확인
 - progress bar가 `128/128`까지 도달하는지 확인
 - checkpoint zip과 최종 `model.zip`이 함께 생성되는지 확인
 - `config.json`에 `"progress_bar": true`가 기록되는지 확인
@@ -591,6 +597,7 @@ Use --overwrite or choose a new --run-dir.
 결과:
 
 - `tqdm` progress bar 출력 확인
+- progress bar postfix 출력 확인: `eps=5`, `ep_ts=23.4`, `ep/100k=3906.2`, `ep_wr=0.600`
 - `128/128` 완료 표시 확인
 - checkpoint zip 생성 확인
 - 최종 `model.zip` 생성 확인
@@ -607,6 +614,7 @@ Use --overwrite or choose a new --run-dir.
 
 - 학습 중 mask-aware 평가 callback이 실행되는지 확인한다.
 - 평가 결과가 `eval_during_training.jsonl`에 저장되는지 확인한다.
+- early-stop eval 로그에 해당 시점의 누적 학습 episode 통계가 함께 출력되는지 확인한다.
 - stop 조건이 만족되면 `total_timesteps` 전에 `learn()`이 중단되는지 확인한다.
 - 중단 후에도 최종 `model.zip`과 `summary.json`이 저장되는지 확인한다.
 
@@ -636,19 +644,75 @@ Use --overwrite or choose a new --run-dir.
 - `win_rate >= 0.0` 조건으로 즉시 중단되는지 확인
 - `summary.json`의 `target_total_timesteps`와 `trained_timesteps`가 다르게 기록되는지 확인
 - `eval_during_training.jsonl`에 stop reason과 illegal action count가 기록되는지 확인
+- `eval_during_training.jsonl`에 `training_episode_stats`가 기록되는지 확인
 
 결과:
 
 - 첫 평가가 `timesteps=64`에서 실행됨
+- eval 로그에 episode 통계 출력 확인: `train_eps=3`, `avg_ep_ts=18.3`, `avg_decisions=34.7`, `ep/100k=4687.5`, `train_ep_wr=0.667`
 - stop reason: `win_rate>=0.0`
 - `target_total_timesteps`: `512`
 - `trained_timesteps`: `64`
 - `illegal_action_count`: `0`
+- `eval_during_training.jsonl`의 `training_episode_stats` 기록 확인
 - `model.zip` 생성 확인
 - `summary.json` 생성 확인
 - `eval_during_training.jsonl` 생성 확인
 
 이 검증은 early stopping 연결성 확인용으로 threshold를 일부러 `0.0`으로 둔 것이다. 실제 장기 학습에서는 더 높은 threshold, 최소 timestep, 충분한 평가 판수를 설정해야 한다.
+
+### 5.11 Episode 통계 기록 검증
+
+추가 확인일: 2026-05-28
+
+검증 목적:
+
+- `total_timesteps`가 실제로 몇 개 episode에 해당하는지 추정할 수 있도록 학습 중 episode 단위 통계를 남기는지 확인한다.
+- 완료 episode별 learner decision 수, 전체 decision 수, turn 수, 승패가 기록되는지 확인한다.
+- 최종 `summary.json`에 episode aggregate metric이 저장되는지 확인한다.
+- 최종 summary에 episode당 평균 learner timestep이 저장되는지 확인한다.
+
+검증 명령:
+
+```bash
+.venv/bin/python scripts/train_ppo.py \
+  --total-timesteps 256 \
+  --seed 12 \
+  --opponent random \
+  --n-envs 2 \
+  --device cpu \
+  --n-steps 64 \
+  --batch-size 32 \
+  --run-dir runs/ppo_episode_stats_smoke \
+  --eval-episodes 0 \
+  --no-progress-bar \
+  --overwrite
+```
+
+검증 내용:
+
+- `episodes.jsonl`이 생성되는지 확인
+- 각 line에 `timesteps`, `learner_decisions`, `turn_count`, `decision_count`, `winner`, `learner_win`이 포함되는지 확인
+- `summary.json`에 `episode_stats`가 포함되는지 확인
+- `average_learner_timesteps`, `max_learner_timesteps`가 계산되는지 확인
+- `episodes_per_100k_timesteps`가 trained timestep 기준으로 계산되는지 확인
+
+결과:
+
+- `episodes.jsonl` 생성 확인
+- 완료 episode 수: `8`
+- learner wins: `3`
+- learner win rate: `0.375`
+- average learner timesteps: `27.125`
+- average turns: `40.0`
+- average decisions: `54.0`
+- max learner timesteps: `38`
+- max turns: `57`
+- max decisions: `80`
+- episodes per 100k timesteps: `3125.0`
+- last completed episode timestep: `230`
+
+이 검증은 통계 기록 연결성 확인용이다. `total_timesteps=256`이므로 episode rate 자체를 일반화하지 않는다.
 
 ## 6. 산출물
 
@@ -698,6 +762,13 @@ Use --overwrite or choose a new --run-dir.
 - `runs/ppo_early_stop_smoke/summary.json`
 - `runs/ppo_early_stop_smoke/eval_during_training.jsonl`
 
+추가 episode stats smoke 산출물:
+
+- `runs/ppo_episode_stats_smoke/config.json`
+- `runs/ppo_episode_stats_smoke/episodes.jsonl`
+- `runs/ppo_episode_stats_smoke/model.zip`
+- `runs/ppo_episode_stats_smoke/summary.json`
+
 ## 7. 완료 기준 점검
 
 - `scripts/train_ppo.py` 구현: 완료
@@ -713,6 +784,7 @@ Use --overwrite or choose a new --run-dir.
 - 장기 학습용 checkpoint 옵션 구현 및 smoke 검증: 완료
 - 장기 학습용 `tqdm` 진행률 표시 구현 및 smoke 검증: 완료
 - 장기 학습용 선택적 early stopping 구현 및 smoke 검증: 완료
+- 학습 중 episode 통계 기록 구현 및 smoke 검증: 완료
 
 ## 8. 보류 및 후속 확인
 

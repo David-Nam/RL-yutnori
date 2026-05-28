@@ -126,6 +126,10 @@ def main() -> None:
             eval_summary["after_random"] = after.to_dict()
             _write_json(run_dir / "eval_after_random.json", after.to_dict())
 
+        episode_stats = _episode_stats_summary(
+            run_dir,
+            trained_timesteps=model.num_timesteps,
+        )
         summary = {
             "model_path": str(model_path),
             "started_at": config["started_at"],
@@ -133,6 +137,7 @@ def main() -> None:
             "checkpoint_dir": config["checkpoint_dir"],
             "target_total_timesteps": args.total_timesteps,
             "trained_timesteps": model.num_timesteps,
+            "episode_stats": episode_stats,
             "evaluation": eval_summary,
         }
         _write_json(run_dir / "summary.json", summary)
@@ -186,11 +191,19 @@ def _prepare_run_dir(run_dir: Path, *, overwrite: bool) -> Path:
 class TqdmProgressCallback(BaseCallback):
     """Show env-timestep progress and ETA during long PPO runs."""
 
-    def __init__(self, total_timesteps: int) -> None:
+    def __init__(
+        self,
+        total_timesteps: int,
+        *,
+        episode_stats: "EpisodeStatsCallback | None" = None,
+    ) -> None:
         super().__init__(verbose=0)
         self.total_timesteps = total_timesteps
+        self.episode_stats = episode_stats
         self._progress_bar: tqdm | None = None
         self._last_num_timesteps = 0
+        self._last_postfix_timestep = 0
+        self._last_postfix_episodes = 0
 
     def _on_training_start(self) -> None:
         self._last_num_timesteps = 0
@@ -210,14 +223,42 @@ class TqdmProgressCallback(BaseCallback):
         if delta > 0:
             self._progress_bar.update(delta)
             self._last_num_timesteps = self.num_timesteps
+            self._refresh_episode_postfix()
         return True
 
     def _on_training_end(self) -> None:
         if self._progress_bar is None:
             return
 
+        self._refresh_episode_postfix(force=True)
         self._progress_bar.close()
         self._progress_bar = None
+
+    def _refresh_episode_postfix(self, *, force: bool = False) -> None:
+        if self._progress_bar is None or self.episode_stats is None:
+            return
+
+        stats = self.episode_stats.summary(trained_timesteps=self.num_timesteps)
+        completed_episodes = int(stats["completed_episodes"])
+        should_refresh = (
+            force
+            or completed_episodes != self._last_postfix_episodes
+            or self.num_timesteps - self._last_postfix_timestep >= 1_000
+        )
+        if not should_refresh:
+            return
+
+        self._progress_bar.set_postfix(
+            {
+                "eps": completed_episodes,
+                "ep_ts": f"{stats['average_learner_timesteps']:.1f}",
+                "ep/100k": f"{stats['episodes_per_100k_timesteps']:.1f}",
+                "ep_wr": f"{stats['learner_win_rate']:.3f}",
+            },
+            refresh=False,
+        )
+        self._last_postfix_timestep = self.num_timesteps
+        self._last_postfix_episodes = completed_episodes
 
 
 class MaskableEarlyStoppingCallback(BaseCallback):
@@ -235,6 +276,7 @@ class MaskableEarlyStoppingCallback(BaseCallback):
         patience: int,
         min_delta: float,
         output_path: Path,
+        episode_stats: "EpisodeStatsCallback | None" = None,
     ) -> None:
         super().__init__(verbose=0)
         self.eval_freq = eval_freq
@@ -246,6 +288,7 @@ class MaskableEarlyStoppingCallback(BaseCallback):
         self.patience = patience
         self.min_delta = min_delta
         self.output_path = output_path
+        self.episode_stats = episode_stats
         self._next_eval_timestep = eval_freq
         self._eval_index = 0
         self._best_win_rate: float | None = None
@@ -276,6 +319,7 @@ class MaskableEarlyStoppingCallback(BaseCallback):
 
         can_stop = self.num_timesteps >= self.min_timesteps
         stop_reason = self._stop_reason(result.win_rate) if can_stop else None
+        episode_summary = self._episode_summary()
         payload = {
             "evaluated_at": datetime.now(UTC).isoformat(),
             "timesteps": self.num_timesteps,
@@ -284,6 +328,7 @@ class MaskableEarlyStoppingCallback(BaseCallback):
             "improved": improved,
             "no_improvement_count": self._no_improvement_count,
             "stop_reason": stop_reason,
+            "training_episode_stats": episode_summary,
             "result": result.to_dict(),
         }
         with self.output_path.open("a") as file:
@@ -295,6 +340,14 @@ class MaskableEarlyStoppingCallback(BaseCallback):
             f"illegal={result.illegal_action_count}, "
             f"best={self._best_win_rate:.4f}"
         )
+        if episode_summary is not None:
+            message = (
+                f"{message}, train_eps={episode_summary['completed_episodes']}, "
+                f"avg_ep_ts={episode_summary['average_learner_timesteps']:.1f}, "
+                f"avg_decisions={episode_summary['average_decisions']:.1f}, "
+                f"ep/100k={episode_summary['episodes_per_100k_timesteps']:.1f}, "
+                f"train_ep_wr={episode_summary['learner_win_rate']:.3f}"
+            )
         if stop_reason is not None:
             message = f"{message}, stop_reason={stop_reason}"
         tqdm.write(message)
@@ -317,20 +370,146 @@ class MaskableEarlyStoppingCallback(BaseCallback):
             return f"no_improvement_patience={self.patience}"
         return None
 
+    def _episode_summary(self) -> dict[str, Any] | None:
+        if self.episode_stats is None:
+            return None
+        return self.episode_stats.summary(trained_timesteps=self.num_timesteps)
+
+
+class EpisodeStatsCallback(BaseCallback):
+    """Record completed episode statistics during training."""
+
+    def __init__(self, output_path: Path) -> None:
+        super().__init__(verbose=0)
+        self.output_path = output_path
+        self._episode_lengths: list[int] = []
+        self._completed_episodes = 0
+        self._learner_wins = 0
+        self._total_turns = 0
+        self._total_decisions = 0
+        self._total_learner_timesteps = 0
+        self._max_decisions = 0
+        self._max_turns = 0
+        self._max_learner_timesteps = 0
+        self._last_completed_episode_timestep = 0
+
+    def _on_training_start(self) -> None:
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.output_path.write_text("")
+        env_count = int(getattr(self.training_env, "num_envs", 1))
+        self._episode_lengths = [0 for _ in range(env_count)]
+
+    def _on_step(self) -> bool:
+        dones = self.locals.get("dones")
+        infos = self.locals.get("infos")
+        if dones is None or infos is None:
+            return True
+
+        for env_index, done in enumerate(dones):
+            self._episode_lengths[env_index] += 1
+            if bool(done):
+                info = infos[env_index]
+                self._record_episode(env_index, info)
+        return True
+
+    def _record_episode(self, env_index: int, info: dict[str, Any]) -> None:
+        self._completed_episodes += 1
+        self._last_completed_episode_timestep = self.num_timesteps
+        learner_player = int(info["learner_player"])
+        winner = info["winner"]
+        learner_win = winner == learner_player
+        if learner_win:
+            self._learner_wins += 1
+
+        turn_count = int(info["turn_count"])
+        decision_count = int(info["decision_count"])
+        learner_decisions = self._episode_lengths[env_index]
+        self._total_turns += turn_count
+        self._total_decisions += decision_count
+        self._total_learner_timesteps += learner_decisions
+        self._max_turns = max(self._max_turns, turn_count)
+        self._max_decisions = max(self._max_decisions, decision_count)
+        self._max_learner_timesteps = max(
+            self._max_learner_timesteps,
+            learner_decisions,
+        )
+
+        payload = {
+            "completed_episodes": self._completed_episodes,
+            "timesteps": self.num_timesteps,
+            "env_index": env_index,
+            "learner_player": learner_player,
+            "winner": winner,
+            "learner_win": learner_win,
+            "learner_decisions": learner_decisions,
+            "turn_count": turn_count,
+            "decision_count": decision_count,
+        }
+        with self.output_path.open("a") as file:
+            file.write(json.dumps(payload, sort_keys=True) + "\n")
+
+        self._episode_lengths[env_index] = 0
+
+    def summary(self, *, trained_timesteps: int | None = None) -> dict[str, Any]:
+        if self._completed_episodes == 0:
+            return {
+                "completed_episodes": 0,
+                "learner_wins": 0,
+                "learner_win_rate": 0.0,
+                "average_learner_timesteps": 0.0,
+                "average_turns": 0.0,
+                "average_decisions": 0.0,
+                "max_learner_timesteps": 0,
+                "max_turns": 0,
+                "max_decisions": 0,
+                "episodes_per_100k_timesteps": 0.0,
+                "last_completed_episode_timestep": 0,
+            }
+        return {
+            "completed_episodes": self._completed_episodes,
+            "learner_wins": self._learner_wins,
+            "learner_win_rate": self._learner_wins / self._completed_episodes,
+            "average_learner_timesteps": (
+                self._total_learner_timesteps / self._completed_episodes
+            ),
+            "average_turns": self._total_turns / self._completed_episodes,
+            "average_decisions": self._total_decisions / self._completed_episodes,
+            "max_learner_timesteps": self._max_learner_timesteps,
+            "max_turns": self._max_turns,
+            "max_decisions": self._max_decisions,
+            "episodes_per_100k_timesteps": (
+                0.0
+                if not trained_timesteps
+                else self._completed_episodes / trained_timesteps * 100_000
+            ),
+            "last_completed_episode_timestep": self._last_completed_episode_timestep,
+        }
+
 
 def _callbacks(
     args: argparse.Namespace,
     run_dir: Path,
 ) -> CallbackList | BaseCallback | None:
     callbacks: list[BaseCallback] = []
+    episode_stats_callback = EpisodeStatsCallback(run_dir / "episodes.jsonl")
+    callbacks.append(episode_stats_callback)
     if not args.no_progress_bar:
-        callbacks.append(TqdmProgressCallback(args.total_timesteps))
+        callbacks.append(
+            TqdmProgressCallback(
+                args.total_timesteps,
+                episode_stats=episode_stats_callback,
+            )
+        )
 
     checkpoint_callback = _checkpoint_callback(args, run_dir)
     if checkpoint_callback is not None:
         callbacks.append(checkpoint_callback)
 
-    early_stopping_callback = _early_stopping_callback(args, run_dir)
+    early_stopping_callback = _early_stopping_callback(
+        args,
+        run_dir,
+        episode_stats=episode_stats_callback,
+    )
     if early_stopping_callback is not None:
         callbacks.append(early_stopping_callback)
 
@@ -369,6 +548,8 @@ def _checkpoint_save_freq_calls(args: argparse.Namespace) -> int | None:
 def _early_stopping_callback(
     args: argparse.Namespace,
     run_dir: Path,
+    *,
+    episode_stats: EpisodeStatsCallback | None = None,
 ) -> MaskableEarlyStoppingCallback | None:
     if args.early_stop_eval_freq == 0:
         return None
@@ -383,6 +564,7 @@ def _early_stopping_callback(
         patience=args.early_stop_patience,
         min_delta=args.early_stop_min_delta,
         output_path=run_dir / "eval_during_training.jsonl",
+        episode_stats=episode_stats,
     )
 
 
@@ -427,6 +609,7 @@ def _config_dict(args: argparse.Namespace, run_dir: Path) -> dict[str, Any]:
             if args.early_stop_eval_freq == 0
             else str(run_dir / "eval_during_training.jsonl")
         ),
+        "episode_stats_log": str(run_dir / "episodes.jsonl"),
         "tensorboard": args.tensorboard,
         "progress_bar": not args.no_progress_bar,
         "system": _system_info(),
@@ -464,6 +647,87 @@ def _git_commit() -> str | None:
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def _episode_stats_summary(
+    run_dir: Path,
+    *,
+    trained_timesteps: int,
+) -> dict[str, Any]:
+    path = run_dir / "episodes.jsonl"
+    if not path.exists():
+        return {
+            "completed_episodes": 0,
+            "learner_wins": 0,
+            "learner_win_rate": 0.0,
+            "average_learner_timesteps": 0.0,
+            "average_turns": 0.0,
+            "average_decisions": 0.0,
+            "max_learner_timesteps": 0,
+            "max_turns": 0,
+            "max_decisions": 0,
+            "episodes_per_100k_timesteps": 0.0,
+            "last_completed_episode_timestep": 0,
+        }
+
+    completed = 0
+    learner_wins = 0
+    total_turns = 0
+    total_decisions = 0
+    total_learner_timesteps = 0
+    max_turns = 0
+    max_decisions = 0
+    max_learner_timesteps = 0
+    final_timesteps = 0
+    for line in path.read_text().splitlines():
+        if not line:
+            continue
+        item = json.loads(line)
+        completed += 1
+        learner_wins += int(bool(item["learner_win"]))
+        turn_count = int(item["turn_count"])
+        decision_count = int(item["decision_count"])
+        learner_timesteps = int(item["learner_decisions"])
+        total_turns += turn_count
+        total_decisions += decision_count
+        total_learner_timesteps += learner_timesteps
+        max_turns = max(max_turns, turn_count)
+        max_decisions = max(max_decisions, decision_count)
+        max_learner_timesteps = max(max_learner_timesteps, learner_timesteps)
+        final_timesteps = max(final_timesteps, int(item["timesteps"]))
+
+    if completed == 0:
+        return {
+            "completed_episodes": 0,
+            "learner_wins": 0,
+            "learner_win_rate": 0.0,
+            "average_learner_timesteps": 0.0,
+            "average_turns": 0.0,
+            "average_decisions": 0.0,
+            "max_learner_timesteps": 0,
+            "max_turns": 0,
+            "max_decisions": 0,
+            "episodes_per_100k_timesteps": 0.0,
+            "last_completed_episode_timestep": 0,
+        }
+
+    return {
+        "completed_episodes": completed,
+        "learner_wins": learner_wins,
+        "learner_win_rate": learner_wins / completed,
+        "average_learner_timesteps": total_learner_timesteps / completed,
+        "average_turns": total_turns / completed,
+        "average_decisions": total_decisions / completed,
+        "max_learner_timesteps": max_learner_timesteps,
+        "max_turns": max_turns,
+        "max_decisions": max_decisions,
+        "episodes_per_100k_timesteps": (
+            0.0
+            if trained_timesteps == 0
+            else completed / trained_timesteps * 100_000
+        ),
+        "last_completed_episode_timestep": final_timesteps,
+    }
 
 
 if __name__ == "__main__":
