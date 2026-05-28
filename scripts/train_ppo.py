@@ -104,6 +104,8 @@ def main() -> None:
                 opponent="random",
                 episodes=args.eval_episodes,
                 seed=args.seed + 10_000,
+                show_progress=not args.no_progress_bar,
+                progress_desc="Eval before random",
             )
             eval_summary["before_random"] = before.to_dict()
             _write_json(run_dir / "eval_before_random.json", before.to_dict())
@@ -122,6 +124,8 @@ def main() -> None:
                 opponent="random",
                 episodes=args.eval_episodes,
                 seed=args.seed + 20_000,
+                show_progress=not args.no_progress_bar,
+                progress_desc="Eval after random",
             )
             eval_summary["after_random"] = after.to_dict()
             _write_json(run_dir / "eval_after_random.json", after.to_dict())
@@ -277,6 +281,7 @@ class MaskableEarlyStoppingCallback(BaseCallback):
         min_delta: float,
         output_path: Path,
         episode_stats: "EpisodeStatsCallback | None" = None,
+        show_progress: bool = True,
     ) -> None:
         super().__init__(verbose=0)
         self.eval_freq = eval_freq
@@ -289,6 +294,7 @@ class MaskableEarlyStoppingCallback(BaseCallback):
         self.min_delta = min_delta
         self.output_path = output_path
         self.episode_stats = episode_stats
+        self.show_progress = show_progress
         self._next_eval_timestep = eval_freq
         self._eval_index = 0
         self._best_win_rate: float | None = None
@@ -307,6 +313,8 @@ class MaskableEarlyStoppingCallback(BaseCallback):
             opponent=self.opponent,
             episodes=self.eval_episodes,
             seed=self.seed + self._eval_index,
+            show_progress=self.show_progress,
+            progress_desc=f"Early eval {self._eval_index + 1}",
         )
         self._eval_index += 1
 
@@ -565,6 +573,7 @@ def _early_stopping_callback(
         min_delta=args.early_stop_min_delta,
         output_path=run_dir / "eval_during_training.jsonl",
         episode_stats=episode_stats,
+        show_progress=not args.no_progress_bar,
     )
 
 

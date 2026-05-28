@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
+from tqdm.auto import tqdm
 
 from yutnori.training.env_factory import make_yutnori_env
 
@@ -62,6 +63,8 @@ def evaluate_maskable_policy(
     learner_player: int = 0,
     deterministic: bool = True,
     max_decisions: int = 10_000,
+    show_progress: bool = False,
+    progress_desc: str | None = None,
 ) -> PolicyEvaluationResult:
     """Evaluate a MaskablePPO-style model while passing masks to predict()."""
 
@@ -82,7 +85,18 @@ def evaluate_maskable_policy(
     starting_player_counts = {0: 0, 1: 0}
 
     try:
-        for episode in range(episodes):
+        episode_iter = range(episodes)
+        if show_progress:
+            episode_iter = tqdm(
+                episode_iter,
+                total=episodes,
+                desc=progress_desc or f"Evaluating vs {opponent}",
+                unit="ep",
+                dynamic_ncols=True,
+                leave=True,
+            )
+
+        for episode in episode_iter:
             obs, info = env.reset(seed=seed + episode)
             starting_player = int(info["starting_player"])
             starting_player_counts[starting_player] += 1
@@ -117,6 +131,16 @@ def evaluate_maskable_policy(
                 wins += 1
             total_turns += int(info["turn_count"])
             total_decisions += int(info["decision_count"])
+
+            if show_progress and hasattr(episode_iter, "set_postfix"):
+                completed = episode + 1
+                episode_iter.set_postfix(
+                    {
+                        "wr": f"{wins / completed:.3f}",
+                        "avg_dec": f"{total_decisions / completed:.1f}",
+                    },
+                    refresh=False,
+                )
     finally:
         env.close()
 

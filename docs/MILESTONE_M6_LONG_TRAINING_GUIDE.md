@@ -138,7 +138,7 @@ python -u scripts/train_ppo.py \
   2>&1 | tee "${LOG_DIR}/${RUN_NAME}.log"
 ```
 
-기본 실행에서는 `tqdm` 진행률 표시가 켜진다. 학습 중 현재 env timestep, 처리 속도, ETA와 함께 완료 episode 통계를 같은 tmux pane에서 볼 수 있다.
+기본 실행에서는 `tqdm` 진행률 표시가 켜진다. 학습 전/후 평가 중에는 평가 episode 진행률이 보이고, 학습 중에는 현재 env timestep, 처리 속도, ETA와 함께 완료 episode 통계를 같은 tmux pane에서 볼 수 있다.
 
 진행바 postfix 의미:
 
@@ -169,6 +169,8 @@ watch -n 5 nvidia-smi
 ```
 
 `tqdm`은 터미널에서 보기 좋은 동적 progress bar를 출력한다. `tee`로 저장한 로그에는 carriage return이 포함될 수 있다. 깔끔한 파일 로그가 더 중요하면 학습 실행 시 `--no-progress-bar`를 추가하고, 대신 SB3 로그가 필요할 때 `--verbose 1`을 같이 사용한다.
+
+`--eval-episodes`가 큰 경우 학습 시작 전 `Eval before random` progress bar가 먼저 끝나야 PPO 학습 progress bar가 시작된다. 정식 10000판 평가는 학습 완료 후 `scripts/evaluate_ppo.py`로 따로 실행하는 것을 권장한다. 별도 평가 스크립트도 기본적으로 episode progress bar를 표시하며, 필요하면 `--no-progress-bar`로 끌 수 있다.
 
 산출물 확인:
 

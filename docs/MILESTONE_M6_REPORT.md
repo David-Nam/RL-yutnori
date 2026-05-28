@@ -119,7 +119,7 @@ model.predict(obs, deterministic=True, action_masks=mask)
 - `scripts/train_ppo.py`에 `--checkpoint-freq` 추가
 - `scripts/train_ppo.py`에 `--checkpoint-dir` 추가
 - checkpoint 저장 경로와 save frequency를 `config.json`, `summary.json`에 기록
-- 기본 실행에서 `tqdm` progress bar로 현재 env timestep, 처리 속도, ETA, 완료 episode 통계 표시
+- 기본 실행에서 `tqdm` progress bar로 평가 episode 진행률, 현재 env timestep, 처리 속도, ETA, 완료 episode 통계 표시
 - `--no-progress-bar`로 동적 progress bar 비활성화 가능
 - 학습 중 주기적으로 mask-aware 평가를 수행해 승률 threshold 또는 patience 기준으로 중단 가능
 - 완료된 episode마다 `episodes.jsonl`에 learner decision 수, turn 수, 전체 decision 수, 승패 기록
@@ -129,7 +129,7 @@ model.predict(obs, deterministic=True, action_masks=mask)
 
 장기 학습 run directory는 기본적으로 덮어쓰지 않는다. `--overwrite`를 명시하지 않으면 비어 있지 않은 run directory에서 실패하므로, 기존 실험 산출물을 실수로 덮어쓰는 일을 막는다.
 
-`tqdm`은 기본값으로 켜진다. tmux pane에서는 진행률, ETA, 완료 episode 수, episode당 평균 learner timestep, 100000 timestep당 episode 수, 학습 episode 승률을 즉시 볼 수 있다. `tee` 로그 파일에는 동적 progress bar의 carriage return이 포함될 수 있으므로, 깔끔한 파일 로그가 필요한 run에서는 `--no-progress-bar`와 `--verbose 1`을 함께 사용할 수 있다.
+`tqdm`은 기본값으로 켜진다. tmux pane에서는 학습 전/후 평가 episode 진행률과 학습 진행률, ETA, 완료 episode 수, episode당 평균 learner timestep, 100000 timestep당 episode 수, 학습 episode 승률을 즉시 볼 수 있다. `tee` 로그 파일에는 동적 progress bar의 carriage return이 포함될 수 있으므로, 깔끔한 파일 로그가 필요한 run에서는 `--no-progress-bar`와 `--verbose 1`을 함께 사용할 수 있다.
 
 early stopping은 일반 SB3 `EvalCallback`이 아니라 기존 `evaluate_maskable_policy()`를 사용하는 custom callback으로 구현했다. 이 방식은 평가 시에도 매 decision마다 `model.predict(..., action_masks=mask)`를 호출하므로 M6의 action mask 요구사항을 유지한다.
 
@@ -714,6 +714,78 @@ Use --overwrite or choose a new --run-dir.
 
 이 검증은 통계 기록 연결성 확인용이다. `total_timesteps=256`이므로 episode rate 자체를 일반화하지 않는다.
 
+### 5.12 평가 진행률 표시 검증
+
+추가 확인일: 2026-05-28
+
+검증 목적:
+
+- 학습 시작 전/후 평가가 오래 걸릴 때 현재 평가 episode 진행률이 보이는지 확인한다.
+- 별도 `scripts/evaluate_ppo.py` 정식 평가에서도 episode 진행률이 보이는지 확인한다.
+- early stopping 평가 중에도 평가 진행률이 보이고, 기존 eval 로그와 함께 동작하는지 확인한다.
+
+검증 명령:
+
+```bash
+.venv/bin/python scripts/train_ppo.py \
+  --total-timesteps 64 \
+  --seed 21 \
+  --opponent random \
+  --n-envs 1 \
+  --device cpu \
+  --n-steps 32 \
+  --batch-size 32 \
+  --run-dir runs/ppo_eval_progress_smoke \
+  --eval-episodes 3 \
+  --overwrite
+```
+
+```bash
+.venv/bin/python scripts/evaluate_ppo.py \
+  --model-path runs/ppo_eval_progress_smoke/model.zip \
+  --opponent random \
+  --episodes 3 \
+  --seed 210 \
+  --device cpu \
+  --output runs/ppo_eval_progress_smoke/eval_random_progress.json
+```
+
+```bash
+.venv/bin/python scripts/train_ppo.py \
+  --total-timesteps 128 \
+  --seed 22 \
+  --opponent random \
+  --n-envs 1 \
+  --device cpu \
+  --n-steps 32 \
+  --batch-size 32 \
+  --early-stop-eval-freq 32 \
+  --early-stop-eval-episodes 2 \
+  --early-stop-win-rate 0.0 \
+  --run-dir runs/ppo_eval_progress_early_smoke \
+  --eval-episodes 0 \
+  --overwrite
+```
+
+검증 내용:
+
+- `Eval before random` progress bar가 `3/3`까지 표시되는지 확인
+- `Eval after random` progress bar가 `3/3`까지 표시되는지 확인
+- `scripts/evaluate_ppo.py`에서 `Evaluate random` progress bar가 표시되는지 확인
+- early stopping 평가에서 `Early eval 1` progress bar가 표시되는지 확인
+- progress bar postfix에 평가 승률 `wr`와 평균 decision 수 `avg_dec`가 표시되는지 확인
+- 평가 결과의 `illegal_action_count`가 `0`인지 확인
+
+결과:
+
+- `Eval before random: 3/3`, `wr=1.000`, `avg_dec=61.7` 출력 확인
+- `Eval after random: 3/3`, `wr=0.667`, `avg_dec=46.0` 출력 확인
+- `Evaluate random: 3/3`, `wr=0.000`, `avg_dec=44.0` 출력 확인
+- `Early eval 1: 2/2`, `wr=0.500`, `avg_dec=58.0` 출력 확인
+- 각 평가 결과에서 `illegal_action_count`: `0`
+
+이 검증은 평가 진행률 표시 연결성 확인용이다. 평가 episode 수가 작으므로 성능 수치로 해석하지 않는다.
+
 ## 6. 산출물
 
 로컬 smoke 산출물은 `runs/ppo_smoke_m6_local/`에 생성됐다. `runs/`는 `.gitignore` 대상이므로 실험 산출물은 git에 포함하지 않는다.
@@ -769,6 +841,19 @@ Use --overwrite or choose a new --run-dir.
 - `runs/ppo_episode_stats_smoke/model.zip`
 - `runs/ppo_episode_stats_smoke/summary.json`
 
+추가 evaluation progress smoke 산출물:
+
+- `runs/ppo_eval_progress_smoke/config.json`
+- `runs/ppo_eval_progress_smoke/eval_before_random.json`
+- `runs/ppo_eval_progress_smoke/eval_after_random.json`
+- `runs/ppo_eval_progress_smoke/eval_random_progress.json`
+- `runs/ppo_eval_progress_smoke/model.zip`
+- `runs/ppo_eval_progress_smoke/summary.json`
+- `runs/ppo_eval_progress_early_smoke/config.json`
+- `runs/ppo_eval_progress_early_smoke/eval_during_training.jsonl`
+- `runs/ppo_eval_progress_early_smoke/model.zip`
+- `runs/ppo_eval_progress_early_smoke/summary.json`
+
 ## 7. 완료 기준 점검
 
 - `scripts/train_ppo.py` 구현: 완료
@@ -785,6 +870,7 @@ Use --overwrite or choose a new --run-dir.
 - 장기 학습용 `tqdm` 진행률 표시 구현 및 smoke 검증: 완료
 - 장기 학습용 선택적 early stopping 구현 및 smoke 검증: 완료
 - 학습 중 episode 통계 기록 구현 및 smoke 검증: 완료
+- 평가 진행률 표시 구현 및 smoke 검증: 완료
 
 ## 8. 보류 및 후속 확인
 

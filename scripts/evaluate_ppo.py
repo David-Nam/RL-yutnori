@@ -31,6 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--max-decisions", type=int, default=10_000)
     parser.add_argument("--stochastic", action="store_true")
+    parser.add_argument("--no-progress-bar", action="store_true")
     return parser.parse_args()
 
 
@@ -49,6 +50,8 @@ def main() -> None:
         seed=args.seed,
         deterministic=not args.stochastic,
         max_decisions=args.max_decisions,
+        show_progress=not args.no_progress_bar,
+        progress_desc=f"Evaluate {args.opponent}",
     )
     payload: dict[str, Any] = {
         "model_path": str(args.model_path),
