@@ -32,6 +32,7 @@ M6에서는 `sb3-contrib`의 `MaskablePPO`를 기존 `YutnoriEnv`에 연결했�
   - `MaskablePPO("MlpPolicy", env, ...)` 학습
   - `learn(..., use_masking=True)` 사용
   - `config.json`, `model.zip`, `summary.json`, 학습 전후 Random 평가 JSON 저장
+  - 장기 학습용 checkpoint 저장 옵션 추가
 - `scripts/evaluate_ppo.py`
   - 저장된 `MaskablePPO` 모델 로드
   - opponent별 mask-aware 평가 JSON 저장
@@ -39,6 +40,11 @@ M6에서는 `sb3-contrib`의 `MaskablePPO`를 기존 `YutnoriEnv`에 연결했�
   - opponent option, seed 재현성, vector env action mask 검증
 - `docs/MILESTONE_M6_REPORT.md`
   - 구현 및 검증 결과 기록
+- `docs/MILESTONE_M6_LONG_TRAINING_GUIDE.md`
+  - tmux 기반 장기 학습 시작 절차
+  - run directory, log, checkpoint, 평가 command 규칙 정리
+- `docs/MILESTONE_M6_PPO_PLAN.md`
+  - M6.6 장기 학습 준비 항목과 완료 기준 보강
 - `requirements.txt`
   - A100 VM의 NVIDIA driver 535/CUDA 12.2와 호환되도록 PyTorch `2.5.1+cu121` 고정
   - PyTorch CUDA 12.1 wheel index 추가
@@ -94,6 +100,19 @@ model.predict(obs, deterministic=True, action_masks=mask)
 예측된 action이 현재 mask에서 `False`이면 illegal action count를 증가시키고 즉시 실패시킨다. 정상 평가에서는 `illegal_action_count`가 `0`이어야 한다.
 
 `--max-decisions`는 평가 harness의 안전장치다. env에 episode length limit을 추가하거나 reward를 바꾸지 않고, 비정상 장기 게임이 관찰되면 평가를 실패시키기만 한다.
+
+### 3.4 장기 학습 준비
+
+장기 학습은 사용자가 별도 `tmux` 세션에서 백그라운드로 실행하기로 했다. 이에 맞춰 다음을 준비했다.
+
+- `scripts/train_ppo.py`에 `--checkpoint-freq` 추가
+- `scripts/train_ppo.py`에 `--checkpoint-dir` 추가
+- checkpoint 저장 경로와 save frequency를 `config.json`, `summary.json`에 기록
+- `docs/MILESTONE_M6_LONG_TRAINING_GUIDE.md` 작성
+
+`--checkpoint-freq`는 env timestep 기준이다. `n_envs > 1`에서는 SB3 callback 호출 횟수와 env timestep 수가 다르므로, 스크립트 내부에서 `checkpoint_freq / n_envs` 기준으로 callback save frequency를 계산한다.
+
+장기 학습 run directory는 기본적으로 덮어쓰지 않는다. `--overwrite`를 명시하지 않으면 비어 있지 않은 run directory에서 실패하므로, 기존 실험 산출물을 실수로 덮어쓰는 일을 막는다.
 
 ## 4. 검증 환경
 
@@ -435,6 +454,84 @@ GreedyFinishAgent 상대:
 - average_decisions: `50.333333333333336`
 - illegal_action_count: `0`
 
+### 5.7 장기 학습 checkpoint 준비 검증
+
+추가 확인일: 2026-05-28
+
+검증 목적:
+
+- 장기 학습 중 최종 `model.zip` 저장 전에 중간 checkpoint가 생성되는지 확인한다.
+- checkpoint 설정이 `config.json`과 `summary.json`에 남는지 확인한다.
+- 기존 run directory 보호 로직이 유지되는지 확인한다.
+
+검증 명령:
+
+```bash
+.venv/bin/python scripts/train_ppo.py \
+  --total-timesteps 128 \
+  --seed 7 \
+  --opponent random \
+  --n-envs 1 \
+  --device cpu \
+  --n-steps 64 \
+  --batch-size 32 \
+  --checkpoint-freq 64 \
+  --run-dir runs/ppo_checkpoint_smoke \
+  --eval-episodes 0 \
+  --overwrite
+```
+
+검증 내용:
+
+- `--checkpoint-freq 64`가 유효한 CLI option인지 확인
+- `learn(..., callback=checkpoint_callback, use_masking=True)` 경로가 예외 없이 끝나는지 확인
+- `runs/ppo_checkpoint_smoke/checkpoints/` 아래 checkpoint zip이 생성되는지 확인
+- 최종 `model.zip`과 `summary.json`도 생성되는지 확인
+- 같은 run directory를 `--overwrite` 없이 다시 사용하면 실패하는지 확인
+
+결과:
+
+- 학습 스크립트 정상 종료
+- checkpoint zip 생성 확인
+  - `runs/ppo_checkpoint_smoke/checkpoints/ppo_yutnori_64_steps.zip`
+  - `runs/ppo_checkpoint_smoke/checkpoints/ppo_yutnori_128_steps.zip`
+- 최종 `model.zip` 생성 확인
+- `summary.json` 생성 확인
+- 같은 run directory 재사용 시 `FileExistsError` 발생 확인
+
+run directory 보호 검증 결과:
+
+```text
+FileExistsError: run directory is not empty: runs/ppo_checkpoint_smoke.
+Use --overwrite or choose a new --run-dir.
+```
+
+이 검증은 checkpoint 저장 연결성 확인용이다. `total_timesteps=128`이므로 학습 성능을 판단하지 않는다.
+
+### 5.8 장기 학습 가이드 검증
+
+추가 확인일: 2026-05-28
+
+검증 대상:
+
+- `docs/MILESTONE_M6_LONG_TRAINING_GUIDE.md`
+
+검증 내용:
+
+- 장기 학습 전 환경 점검 command가 포함되어 있는지 확인
+- `tmux` 세션 생성, detach, attach 방법이 포함되어 있는지 확인
+- stdout/stderr log를 run directory 밖의 `logs/ppo/`에 저장하도록 안내하는지 확인
+- seed별 run directory naming 규칙이 있는지 확인
+- `--checkpoint-freq`를 포함한 장기 학습 command가 있는지 확인
+- Random/CaptureFirst/GreedyFinish 평가 command가 모두 있는지 확인
+- `illegal_action_count == 0` 확인 기준이 명시되어 있는지 확인
+- 실패 대응 기준이 명시되어 있는지 확인
+
+결과:
+
+- 위 항목을 모두 문서에 반영했다.
+- 장기 학습 자체는 사용자가 별도 `tmux` 세션에서 실행할 예정이므로, 이 보고서에서는 장기 실험 결과를 기록하지 않았다.
+
 ## 6. 산출물
 
 로컬 smoke 산출물은 `runs/ppo_smoke_m6_local/`에 생성됐다. `runs/`는 `.gitignore` 대상이므로 실험 산출물은 git에 포함하지 않는다.
@@ -459,6 +556,13 @@ GreedyFinishAgent 상대:
 - `runs/ppo_smoke_m6_cuda/summary.json`
 - `runs/ppo_smoke_m6_cuda/eval_random_cuda.json`
 
+추가 checkpoint smoke 산출물:
+
+- `runs/ppo_checkpoint_smoke/config.json`
+- `runs/ppo_checkpoint_smoke/model.zip`
+- `runs/ppo_checkpoint_smoke/summary.json`
+- `runs/ppo_checkpoint_smoke/checkpoints/<checkpoint>.zip`
+
 ## 7. 완료 기준 점검
 
 - `scripts/train_ppo.py` 구현: 완료
@@ -470,10 +574,12 @@ GreedyFinishAgent 상대:
 - `RandomAgent`, `CaptureFirstAgent`, `GreedyFinishAgent` 상대 평가 실행 가능: 완료
 - `python -m pytest`에 해당하는 `.venv/bin/python -m pytest` 통과: 완료
 - `docs/MILESTONE_M6_REPORT.md` 상세 검증 결과 저장: 완료
+- `docs/MILESTONE_M6_LONG_TRAINING_GUIDE.md` 장기 학습 실행 절차 저장: 완료
+- 장기 학습용 checkpoint 옵션 구현 및 smoke 검증: 완료
 
 ## 8. 보류 및 후속 확인
 
 - A100 VM의 승인된 샌드박스 외부 실행에서는 CUDA 사용 가능을 확인했다. 다만 Codex 기본 샌드박스 내부에는 `/dev/nvidia*`가 보이지 않으므로 GPU 검증 명령은 승인 실행이 필요했다.
 - 이번 smoke는 `total_timesteps=256`, `episodes=5`이므로 성능 비교 의미는 없다.
-- 장기 학습에서는 `n_envs=8`, `16`, `24`와 `total_timesteps=500000+` 설정을 VM에서 별도로 실행해야 한다.
+- 장기 학습 실행 절차와 checkpoint 준비는 완료했다. 실제 `n_envs=8`, `16`, `24` 및 `total_timesteps=500000+` 실험은 사용자가 별도 `tmux` 세션에서 실행한다.
 - reward 변경, shaped reward, episode length limit, self-play snapshot pool은 추가하지 않았다.

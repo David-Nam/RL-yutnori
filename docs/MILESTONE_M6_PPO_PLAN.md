@@ -313,6 +313,13 @@ python -m pytest
 - seed별 실행 command 정리
 - baseline별 평가 command 정리
 - 산출물 저장 구조 정리
+- tmux 기반 실행 절차 정리
+- 장기 학습 중 중간 모델 보존을 위한 checkpoint 옵션 정리
+
+예상 파일:
+
+- `docs/MILESTONE_M6_LONG_TRAINING_GUIDE.md`
+- `scripts/train_ppo.py`
 
 예상 디렉터리 구조:
 
@@ -325,6 +332,7 @@ runs/
       eval_random.json
       eval_capture_first.json
       eval_greedy_finish.json
+      checkpoints/
       tensorboard/
 ```
 
@@ -337,6 +345,7 @@ python scripts/train_ppo.py \
   --opponent random \
   --n-envs 16 \
   --device cuda \
+  --checkpoint-freq 100000 \
   --run-dir runs/ppo/random_seed_0
 ```
 
@@ -344,7 +353,9 @@ python scripts/train_ppo.py \
 
 - 동일 command를 seed만 바꿔 반복 실행할 수 있어야 한다.
 - run directory가 덮어쓰기 위험 없이 생성되어야 한다.
+- 짧은 checkpoint smoke에서 checkpoint zip이 생성되어야 한다.
 - 평가 결과가 JSON 또는 CSV로 남아야 한다.
+- 장기 학습 시작/모니터링/평가 방법이 문서화되어야 한다.
 
 ## 6. PPO 구현 시 주의 사항
 
@@ -420,6 +431,7 @@ reward 변경이 필요해 보이면 다음을 먼저 보고한다.
 - CPU/GPU 정보
 - 학습 시작/종료 시각
 - 저장 model path
+- checkpoint directory
 - 평가 결과
 
 평가 결과에는 최소한 다음 metric을 포함한다.
@@ -448,6 +460,7 @@ M6 1차 구현은 다음을 모두 만족해야 완료로 본다.
 - `RandomAgent`, `CaptureFirstAgent`, `GreedyFinishAgent` 상대 평가 실행 가능
 - `python -m pytest` 통과
 - `docs/MILESTONE_M6_REPORT.md`에 상세 검증 결과 저장
+- `docs/MILESTONE_M6_LONG_TRAINING_GUIDE.md`에 장기 학습 실행 절차 저장
 
 ## 9. 추후 확장 후보
 

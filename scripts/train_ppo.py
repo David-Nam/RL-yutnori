@@ -22,6 +22,7 @@ import sb3_contrib  # noqa: E402
 import stable_baselines3  # noqa: E402
 import torch  # noqa: E402
 from sb3_contrib import MaskablePPO  # noqa: E402
+from stable_baselines3.common.callbacks import CheckpointCallback  # noqa: E402
 
 from yutnori.training import (  # noqa: E402
     OPPONENT_NAMES,
@@ -45,6 +46,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ent-coef", type=float, default=0.0)
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--eval-episodes", type=int, default=20)
+    parser.add_argument("--checkpoint-freq", type=int, default=0)
+    parser.add_argument("--checkpoint-dir", type=Path, default=None)
     parser.add_argument("--tensorboard", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--verbose", type=int, default=0)
@@ -56,8 +59,9 @@ def main() -> None:
     _validate_args(args)
     run_dir = _prepare_run_dir(args.run_dir, overwrite=args.overwrite)
 
-    config = _config_dict(args)
+    config = _config_dict(args, run_dir)
     _write_json(run_dir / "config.json", config)
+    checkpoint_callback = _checkpoint_callback(args, run_dir)
 
     vec_env = make_yutnori_vec_env(
         opponent=args.opponent,
@@ -91,7 +95,11 @@ def main() -> None:
             eval_summary["before_random"] = before.to_dict()
             _write_json(run_dir / "eval_before_random.json", before.to_dict())
 
-        model.learn(total_timesteps=args.total_timesteps, use_masking=True)
+        model.learn(
+            total_timesteps=args.total_timesteps,
+            callback=checkpoint_callback,
+            use_masking=True,
+        )
         model_path = run_dir / "model.zip"
         model.save(model_path)
 
@@ -109,6 +117,7 @@ def main() -> None:
             "model_path": str(model_path),
             "started_at": config["started_at"],
             "finished_at": datetime.now(UTC).isoformat(),
+            "checkpoint_dir": config["checkpoint_dir"],
             "evaluation": eval_summary,
         }
         _write_json(run_dir / "summary.json", summary)
@@ -128,6 +137,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("batch_size must be positive")
     if args.eval_episodes < 0:
         raise ValueError("eval_episodes must be non-negative")
+    if args.checkpoint_freq < 0:
+        raise ValueError("checkpoint_freq must be non-negative")
     rollout_size = args.n_steps * args.n_envs
     if args.batch_size > rollout_size:
         raise ValueError("batch_size must be <= n_steps * n_envs")
@@ -143,7 +154,41 @@ def _prepare_run_dir(run_dir: Path, *, overwrite: bool) -> Path:
     return run_dir
 
 
-def _config_dict(args: argparse.Namespace) -> dict[str, Any]:
+def _checkpoint_callback(
+    args: argparse.Namespace,
+    run_dir: Path,
+) -> CheckpointCallback | None:
+    if args.checkpoint_freq == 0:
+        return None
+
+    checkpoint_dir = _resolve_checkpoint_dir(args, run_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    save_freq_calls = _checkpoint_save_freq_calls(args)
+    return CheckpointCallback(
+        save_freq=save_freq_calls,
+        save_path=str(checkpoint_dir),
+        name_prefix="ppo_yutnori",
+        save_replay_buffer=False,
+        save_vecnormalize=False,
+    )
+
+
+def _checkpoint_save_freq_calls(args: argparse.Namespace) -> int | None:
+    if args.checkpoint_freq == 0:
+        return None
+    return max((args.checkpoint_freq + args.n_envs - 1) // args.n_envs, 1)
+
+
+def _resolve_checkpoint_dir(args: argparse.Namespace, run_dir: Path) -> Path | None:
+    if args.checkpoint_freq == 0:
+        return None
+    if args.checkpoint_dir is not None:
+        return args.checkpoint_dir
+    return run_dir / "checkpoints"
+
+
+def _config_dict(args: argparse.Namespace, run_dir: Path) -> dict[str, Any]:
+    checkpoint_dir = _resolve_checkpoint_dir(args, run_dir)
     return {
         "command": sys.argv,
         "git_commit": _git_commit(),
@@ -160,6 +205,9 @@ def _config_dict(args: argparse.Namespace) -> dict[str, Any]:
         "gae_lambda": args.gae_lambda,
         "ent_coef": args.ent_coef,
         "eval_episodes": args.eval_episodes,
+        "checkpoint_freq": args.checkpoint_freq,
+        "checkpoint_dir": None if checkpoint_dir is None else str(checkpoint_dir),
+        "checkpoint_save_freq_calls": _checkpoint_save_freq_calls(args),
         "tensorboard": args.tensorboard,
         "system": _system_info(),
     }
