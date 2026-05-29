@@ -168,7 +168,7 @@ tail -f logs/ppo/random_seed_0_1m_nenv16.log
 watch -n 5 nvidia-smi
 ```
 
-`tqdm`은 터미널에서 보기 좋은 동적 progress bar를 출력한다. `tee`로 저장한 로그에는 carriage return이 포함될 수 있다. 깔끔한 파일 로그가 더 중요하면 학습 실행 시 `--no-progress-bar`를 추가하고, 대신 SB3 로그가 필요할 때 `--verbose 1`을 같이 사용한다.
+`tqdm`은 터미널에서 보기 좋은 동적 progress bar를 출력한다. 직접 `tee`로 저장한 로그에는 carriage return 갱신이 누적될 수 있다. 깔끔한 파일 로그가 더 중요하면 학습 실행 시 `--no-progress-bar`를 추가하고, 대신 SB3 로그가 필요할 때 `--verbose 1`을 같이 사용한다. `scripts/run_ppo_long_sweep.py`는 tmux 화면에는 progress bar를 그대로 보여주되 `logs/ppo/` 파일에는 carriage return으로 덮어쓴 줄의 마지막 상태만 기록한다.
 
 `--eval-episodes`가 큰 경우 학습 시작 전 `Eval before random` progress bar가 먼저 끝나야 PPO 학습 progress bar가 시작된다. 정식 10000판 평가는 학습 완료 후 `scripts/evaluate_ppo.py`로 따로 실행하는 것을 권장한다. 별도 평가 스크립트도 기본적으로 episode progress bar를 표시하며, 필요하면 `--no-progress-bar`로 끌 수 있다.
 
@@ -386,9 +386,91 @@ M8 최종 평가로 넘어가기 전 권장 반복:
 
 - `seed=0..4`
 
-## 9. 실패 대응
+## 9. Baseline Sweep 자동 실행
 
-### 9.1 run directory가 이미 존재하는 경우
+세 baseline opponent 각각에 대해 seed `0`, `1`, `2`를 `10000000`
+timesteps로 순차 학습하려면 sweep script를 사용한다.
+
+```bash
+tmux new -s ppo_10m_sweep
+```
+
+tmux 세션 안에서 실행:
+
+```bash
+cd /home/david-nam/work-space/RL-yutnori
+source .venv/bin/activate
+
+python -u scripts/run_ppo_long_sweep.py
+```
+
+기본 설정:
+
+- training opponents: `random`, `capture_first`, `greedy_finish`
+- seeds: `0`, `1`, `2`
+- total timesteps: `10000000`
+- n_envs: `16`
+- device: `cuda`
+- train-time quick eval episodes: `100`
+- final eval episodes: `10000`
+- final eval opponents: `random`, `capture_first`, `greedy_finish`
+
+run directory 이름:
+
+```text
+runs/ppo/<opponent>_seed_<seed>_10m_nenv16/
+```
+
+예:
+
+```text
+runs/ppo/random_seed_1_10m_nenv16/
+runs/ppo/capture_first_seed_0_10m_nenv16/
+runs/ppo/greedy_finish_seed_2_10m_nenv16/
+```
+
+로그 파일:
+
+```text
+logs/ppo/<opponent>_seed_<seed>_10m_nenv16.log
+```
+
+Sweep script의 로그 파일은 `tqdm`의 carriage return 갱신을 압축해서 기록하므로, 진행률이 갱신될 때마다 파일 크기가 커지지 않는다.
+
+실행 전에 생성될 command만 확인하려면:
+
+```bash
+python scripts/run_ppo_long_sweep.py --dry-run --skip-final-eval
+```
+
+학습만 하고 정식 10000판 평가는 나중에 따로 실행하려면:
+
+```bash
+python -u scripts/run_ppo_long_sweep.py --skip-final-eval
+```
+
+특정 opponent 또는 seed만 실행할 수도 있다.
+
+```bash
+python -u scripts/run_ppo_long_sweep.py \
+  --opponents random capture_first \
+  --seeds 1 2
+```
+
+이미 `model.zip`과 `summary.json`이 있는 완료 run은 기본적으로 학습을
+건너뛴다. run directory가 비어 있지 않은데 완료 산출물이 없으면 중단한다.
+이 경우 기존 산출물을 확인한 뒤 새 run name을 쓰거나, 정말 다시 실행할 때만
+`--overwrite`를 사용한다.
+
+주의:
+
+- 9개 장기 학습을 순차 실행하므로 A100 한 장 기준으로 여러 시간이 걸릴 수 있다.
+- `--final-eval-episodes 10000`은 각 run 완료 후 세 baseline에 대해 정식 평가를 수행한다.
+- 중간에 중단되면 같은 command를 다시 실행해 완료된 run을 건너뛰고 이어갈 수 있다.
+
+## 10. 실패 대응
+
+### 10.1 run directory가 이미 존재하는 경우
 
 증상:
 
@@ -405,7 +487,7 @@ FileExistsError: run directory is not empty
 - 새 `RUN_NAME`을 사용한다.
 - 장기 학습에서는 `--overwrite`를 사용하지 않는다.
 
-### 9.2 CUDA가 보이지 않는 경우
+### 10.2 CUDA가 보이지 않는 경우
 
 확인:
 
@@ -429,7 +511,7 @@ PY
 python -m pip install -r requirements.txt
 ```
 
-### 9.3 학습이 비정상적으로 오래 걸리는 경우
+### 10.3 학습이 비정상적으로 오래 걸리는 경우
 
 확인할 것:
 
@@ -448,7 +530,7 @@ python -m pip install -r requirements.txt
 - 마지막 checkpoint
 - 실패 command와 log 일부
 
-### 9.4 중간 checkpoint만 남은 경우
+### 10.4 중간 checkpoint만 남은 경우
 
 최종 `model.zip`이 없더라도 checkpoint는 평가할 수 있다.
 
@@ -464,7 +546,7 @@ python scripts/evaluate_ppo.py \
 
 M6 현재 스크립트는 checkpoint에서 자동 resume하는 CLI를 제공하지 않는다. checkpoint는 중간 정책 보존과 사후 평가용으로 사용한다.
 
-### 9.5 early stopping이 너무 빨리 발생하는 경우
+### 10.5 early stopping이 너무 빨리 발생하는 경우
 
 확인할 것:
 
@@ -481,7 +563,7 @@ M6 현재 스크립트는 checkpoint에서 자동 resume하는 CLI를 제공하�
 - threshold 기준이면 `early_stop_win_rate`를 높인다.
 - patience 기준이면 `early_stop_patience`를 늘리거나 `early_stop_min_delta`를 줄인다.
 
-## 10. 완료 보고 기준
+## 11. 완료 보고 기준
 
 장기 학습 run 하나가 끝나면 다음을 보고한다.
 

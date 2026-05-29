@@ -39,6 +39,10 @@ M6에서는 `sb3-contrib`의 `MaskablePPO`를 기존 `YutnoriEnv`에 연결했�
 - `scripts/evaluate_ppo.py`
   - 저장된 `MaskablePPO` 모델 로드
   - opponent별 mask-aware 평가 JSON 저장
+- `scripts/run_ppo_long_sweep.py`
+  - baseline opponent 3종 x seed 3종 장기 학습 자동 실행
+  - 완료 run skip, 불완전 run 보호, stdout/log 동시 기록
+  - 학습 후 baseline별 정식 평가 자동 실행 옵션 제공
 - `tests/test_training_env_factory.py`
   - opponent option, seed 재현성, vector env action mask 검증
 - `docs/MILESTONE_M6_REPORT.md`
@@ -786,6 +790,54 @@ Use --overwrite or choose a new --run-dir.
 
 이 검증은 평가 진행률 표시 연결성 확인용이다. 평가 episode 수가 작으므로 성능 수치로 해석하지 않는다.
 
+### 5.13 PPO 장기 Sweep Script 검증
+
+추가 확인일: 2026-05-28
+
+검증 목적:
+
+- baseline opponent 3종과 seed 3종의 `10000000` timestep 학습 command를 자동 생성하는지 확인한다.
+- 기존에 완료된 run은 건너뛰고, 새 run은 안전한 run directory와 log path를 사용하는지 확인한다.
+- 실제 장기 학습을 시작하지 않고 dry-run으로 command 구성을 검증한다.
+
+검증 명령:
+
+```bash
+.venv/bin/python scripts/run_ppo_long_sweep.py \
+  --dry-run \
+  --skip-final-eval
+```
+
+추가 단일 command 확인:
+
+```bash
+.venv/bin/python scripts/run_ppo_long_sweep.py \
+  --dry-run \
+  --skip-final-eval \
+  --opponents random \
+  --seeds 1
+```
+
+검증 내용:
+
+- 기본 opponents가 `random`, `capture_first`, `greedy_finish`인지 확인
+- 기본 seeds가 `0`, `1`, `2`인지 확인
+- 기본 total timesteps가 `10000000`인지 확인
+- run name이 `<opponent>_seed_<seed>_10m_nenv16` 형식인지 확인
+- 기존 완료 run `runs/ppo/random_seed_0_10m_nenv16`을 skip하는지 확인
+- `--skip-final-eval` 사용 시 학습 command만 생성되는지 확인
+
+결과:
+
+- `random_seed_0_10m_nenv16` 완료 run skip 확인
+- `random_seed_1_10m_nenv16`, `random_seed_2_10m_nenv16` command 생성 확인
+- `capture_first_seed_0_10m_nenv16`부터 `capture_first_seed_2_10m_nenv16`까지 command 생성 확인
+- `greedy_finish_seed_0_10m_nenv16`부터 `greedy_finish_seed_2_10m_nenv16`까지 command 생성 확인
+- 단일 dry-run에서 `random_seed_1_10m_nenv16` command 생성 확인
+- `compileall` 통과 확인
+
+이 검증은 orchestration command 구성 검증이다. 실제 9개 장기 학습은 사용자가 별도 tmux 세션에서 실행한다.
+
 ## 6. 산출물
 
 로컬 smoke 산출물은 `runs/ppo_smoke_m6_local/`에 생성됐다. `runs/`는 `.gitignore` 대상이므로 실험 산출물은 git에 포함하지 않는다.
@@ -854,6 +906,10 @@ Use --overwrite or choose a new --run-dir.
 - `runs/ppo_eval_progress_early_smoke/model.zip`
 - `runs/ppo_eval_progress_early_smoke/summary.json`
 
+추가 sweep script:
+
+- `scripts/run_ppo_long_sweep.py`
+
 ## 7. 완료 기준 점검
 
 - `scripts/train_ppo.py` 구현: 완료
@@ -871,6 +927,7 @@ Use --overwrite or choose a new --run-dir.
 - 장기 학습용 선택적 early stopping 구현 및 smoke 검증: 완료
 - 학습 중 episode 통계 기록 구현 및 smoke 검증: 완료
 - 평가 진행률 표시 구현 및 smoke 검증: 완료
+- baseline x seed 장기 sweep script 구현 및 dry-run 검증: 완료
 
 ## 8. 보류 및 후속 확인
 
