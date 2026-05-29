@@ -2,6 +2,7 @@ import pytest
 
 from yutnori.agents import CaptureFirstAgent, GreedyFinishAgent, RandomAgent
 from yutnori.agents.baseline import (
+    ProjectRFRuleBasedAgent,
     project_rf_action_score,
     project_rf_distance_to_finish,
 )
@@ -87,7 +88,12 @@ def test_baseline_agent_selected_actions_remain_legal_after_mutation():
     state.pieces[1][0] = Position.at(Route.OUTER, 3)
     state.set_pool(YutResult.GAE, YutResult.MO)
 
-    for agent in (RandomAgent(seed=3), CaptureFirstAgent(), GreedyFinishAgent()):
+    for agent in (
+        RandomAgent(seed=3),
+        CaptureFirstAgent(),
+        GreedyFinishAgent(),
+        ProjectRFRuleBasedAgent(),
+    ):
         legal_actions = state.get_legal_actions()
         action = agent.select_action(state, legal_actions)
         assert action in legal_actions
@@ -168,3 +174,66 @@ def test_project_rf_action_score_prefers_shorter_distance_to_finish():
     gae_score = project_rf_action_score(state, encode_action(0, YutResult.GAE))
 
     assert gae_score > do_score
+
+
+def test_project_rf_rule_agent_rejects_empty_legal_actions():
+    with pytest.raises(ValueError, match="legal_actions must not be empty"):
+        ProjectRFRuleBasedAgent().select_action(GameState(), [])
+
+
+def test_project_rf_rule_agent_prefers_finish_over_capture():
+    state = GameState()
+    state.pieces[0][0] = Position.at(Route.OUTER, 19)
+    state.pieces[0][1] = Position.at(Route.OUTER, 1)
+    state.pieces[1][0] = Position.at(Route.OUTER, 3)
+    state.set_pool(YutResult.GAE)
+
+    action = ProjectRFRuleBasedAgent().select_action(state, state.get_legal_actions())
+
+    assert action == encode_action(0, YutResult.GAE)
+
+
+def test_project_rf_rule_agent_prefers_capture_over_simple_advance():
+    state = GameState()
+    state.pieces[0][0] = Position.at(Route.OUTER, 1)
+    state.pieces[0][1] = Position.at(Route.OUTER, 4)
+    state.pieces[1][0] = Position.at(Route.OUTER, 3)
+    state.set_pool(YutResult.GAE)
+
+    action = ProjectRFRuleBasedAgent().select_action(state, state.get_legal_actions())
+
+    assert action == encode_action(0, YutResult.GAE)
+
+
+def test_project_rf_rule_agent_prefers_moving_stack():
+    state = GameState()
+    state.pieces[0][0] = Position.at(Route.OUTER, 1)
+    state.pieces[0][1] = Position.at(Route.OUTER, 1)
+    state.pieces[0][2] = Position.at(Route.OUTER, 2)
+    state.pieces[0][3] = Position.finished()
+    state.set_pool(YutResult.DO)
+
+    action = ProjectRFRuleBasedAgent().select_action(state, state.get_legal_actions())
+
+    assert action == encode_action(0, YutResult.DO)
+
+
+def test_project_rf_rule_agent_prefers_shorter_distance_to_finish():
+    state = GameState()
+    state.pieces[0][0] = Position.at(Route.OUTER, 1)
+    for piece_id in range(1, 4):
+        state.pieces[0][piece_id] = Position.finished()
+    state.set_pool(YutResult.DO, YutResult.GAE)
+
+    action = ProjectRFRuleBasedAgent().select_action(state, state.get_legal_actions())
+
+    assert action == encode_action(0, YutResult.GAE)
+
+
+def test_project_rf_rule_agent_breaks_score_ties_by_current_action_id():
+    state = GameState()
+    state.set_pool(YutResult.DO)
+
+    action = ProjectRFRuleBasedAgent().select_action(state, state.get_legal_actions())
+
+    assert action == encode_action(3, YutResult.DO)
