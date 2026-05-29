@@ -6,10 +6,16 @@ from collections.abc import Callable
 
 from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv
 
-from yutnori.agents import Agent, CaptureFirstAgent, GreedyFinishAgent, RandomAgent
+from yutnori.agents import (
+    Agent,
+    CaptureFirstAgent,
+    GreedyFinishAgent,
+    ProjectRFRuleBasedAgent,
+    RandomAgent,
+)
 from yutnori.env import YutnoriEnv
 
-OPPONENT_NAMES = ("random", "capture_first", "greedy_finish")
+OPPONENT_NAMES = ("random", "capture_first", "greedy_finish", "project_rf_rule")
 
 
 def make_opponent(name: str, *, seed: int | None = None) -> Agent:
@@ -21,6 +27,8 @@ def make_opponent(name: str, *, seed: int | None = None) -> Agent:
         return CaptureFirstAgent()
     if name == "greedy_finish":
         return GreedyFinishAgent()
+    if name == "project_rf_rule":
+        return ProjectRFRuleBasedAgent()
     raise ValueError(
         f"unknown opponent {name!r}; expected one of {', '.join(OPPONENT_NAMES)}"
     )

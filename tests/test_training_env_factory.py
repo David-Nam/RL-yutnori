@@ -2,9 +2,15 @@ import numpy as np
 import pytest
 from sb3_contrib.common.maskable.utils import get_action_masks
 
+from yutnori.agents import ProjectRFRuleBasedAgent
 from yutnori.core import ACTION_SIZE
 from yutnori.training import OPPONENT_NAMES, make_yutnori_env, make_yutnori_vec_env
 from yutnori.training.env_factory import make_opponent
+
+
+def test_project_rf_rule_opponent_is_registered():
+    assert "project_rf_rule" in OPPONENT_NAMES
+    assert isinstance(make_opponent("project_rf_rule"), ProjectRFRuleBasedAgent)
 
 
 def test_make_opponent_rejects_unknown_name():
