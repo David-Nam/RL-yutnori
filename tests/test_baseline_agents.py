@@ -1,4 +1,10 @@
+import pytest
+
 from yutnori.agents import CaptureFirstAgent, GreedyFinishAgent, RandomAgent
+from yutnori.agents.baseline import (
+    project_rf_action_score,
+    project_rf_distance_to_finish,
+)
 from yutnori.core import Cell, GameState, Position, Route, YutResult, encode_action
 
 
@@ -103,3 +109,62 @@ def test_capture_first_agent_can_be_used_as_env_opponent_policy():
     assert event.captured_count == 1
     assert event.moved_piece_ids == [0]
     assert state.pieces[1][0].physical_cell == Cell.O3
+
+
+def test_project_rf_distance_to_finish_counts_exact_home_as_one_step():
+    assert project_rf_distance_to_finish(Position.finished()) == 0
+    assert project_rf_distance_to_finish(Position.home()) == 1
+    assert project_rf_distance_to_finish(Position.at(Route.OUTER, 19)) == 2
+
+
+def test_project_rf_action_score_rewards_finishing_destination():
+    state = GameState()
+    state.pieces[0][0] = Position.at(Route.OUTER, 19)
+    state.set_pool(YutResult.GAE)
+
+    score = project_rf_action_score(state, encode_action(0, YutResult.GAE))
+
+    assert score == pytest.approx(100.0)
+
+
+def test_project_rf_action_score_rewards_capture_once():
+    state = GameState()
+    state.pieces[0][0] = Position.at(Route.OUTER, 1)
+    state.pieces[1][0] = Position.at(Route.OUTER, 3)
+    state.pieces[1][1] = Position.at(Route.OUTER, 3)
+    state.set_pool(YutResult.GAE)
+
+    score = project_rf_action_score(state, encode_action(0, YutResult.GAE))
+
+    assert score == pytest.approx(41.0)
+
+
+def test_project_rf_action_score_rewards_waiting_piece_start():
+    state = GameState()
+    state.set_pool(YutResult.DO)
+
+    score = project_rf_action_score(state, encode_action(0, YutResult.DO))
+
+    assert score == pytest.approx(-5.0)
+
+
+def test_project_rf_action_score_rewards_moving_stack():
+    state = GameState()
+    state.pieces[0][0] = Position.at(Route.OUTER, 1)
+    state.pieces[0][1] = Position.at(Route.OUTER, 1)
+    state.set_pool(YutResult.GAE)
+
+    score = project_rf_action_score(state, encode_action(0, YutResult.GAE))
+
+    assert score == pytest.approx(-5.0)
+
+
+def test_project_rf_action_score_prefers_shorter_distance_to_finish():
+    state = GameState()
+    state.pieces[0][0] = Position.at(Route.OUTER, 1)
+    state.set_pool(YutResult.DO, YutResult.GAE)
+
+    do_score = project_rf_action_score(state, encode_action(0, YutResult.DO))
+    gae_score = project_rf_action_score(state, encode_action(0, YutResult.GAE))
+
+    assert gae_score > do_score

@@ -6,7 +6,16 @@ import random
 from dataclasses import dataclass
 from typing import Protocol
 
-from yutnori.core import GameState, PieceStatus, YutResult, decode_action
+from yutnori.core import (
+    Cell,
+    GameState,
+    PieceStatus,
+    Position,
+    Route,
+    YutResult,
+    decode_action,
+)
+from yutnori.core.board import ROUTES
 from yutnori.core.yut import steps_for
 
 
@@ -106,6 +115,57 @@ def evaluate_action(state: GameState, action: int) -> ActionEvaluation:
         entered_shortcut=move_result.entered_shortcut,
         steps=steps_for(yut_result),
     )
+
+
+def project_rf_action_score(state: GameState, action: int) -> float:
+    """Score an action with the project-RF rule-based heuristic."""
+
+    if not state.is_legal_action(action):
+        raise ValueError(f"illegal action cannot be scored: {action}")
+
+    actor = state.current_player
+    opponent = 1 - actor
+    piece_id, yut_result = decode_action(action)
+    old_position = state.pieces[actor][piece_id]
+    moving_piece_ids = state.stack_piece_ids(actor, piece_id)
+    move_result = state.board.move(old_position, steps_for(yut_result))
+
+    score = 0.0
+    if move_result.status == PieceStatus.FINISHED:
+        score += 100
+    if (
+        move_result.status == PieceStatus.ON_BOARD
+        and move_result.physical_cell is not None
+        and state.piece_ids_at_cell(opponent, move_result.physical_cell)
+    ):
+        score += 50
+    if old_position.status == PieceStatus.WAITING:
+        score += 5
+
+    stack_size = (
+        1 if old_position.status == PieceStatus.WAITING else len(moving_piece_ids)
+    )
+    score += 4 * max(0, stack_size - 1)
+    score -= 0.5 * project_rf_distance_to_finish(move_result.position)
+    return score
+
+
+def project_rf_distance_to_finish(position: Position) -> int:
+    """Return remaining positive-step distance under the local board rules."""
+
+    if position.status == PieceStatus.FINISHED:
+        return 0
+    if position.status == PieceStatus.WAITING:
+        return len(ROUTES[Route.OUTER])
+    if position.status != PieceStatus.ON_BOARD:
+        raise ValueError(f"unknown piece status: {position.status}")
+    if position.physical_cell == Cell.HOME:
+        return 1
+    if position.route is None or position.index is None:
+        raise ValueError("on-board position requires route and index")
+
+    home_index = len(ROUTES[position.route]) - 1
+    return home_index - position.index + 1
 
 
 def _capture_score(evaluation: ActionEvaluation) -> tuple[int, int, int, int, int]:
