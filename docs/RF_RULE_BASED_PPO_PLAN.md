@@ -102,7 +102,7 @@ distance penalty: -0.5 * distance_to_finish
 
 ### Step 4. RF opponent game smoke 검증 추가
 
-상태: 예정
+상태: 완료
 
 구현:
 
@@ -117,9 +117,16 @@ distance penalty: -0.5 * distance_to_finish
 - wins 합계가 games와 같아야 한다.
 - agent가 illegal action을 선택하지 않아야 한다.
 
+결과:
+
+- `ProjectRFRuleBasedAgent`를 player 0/player 1 양쪽 위치에 두고
+  random, capture_first, greedy_finish 상대 100판 smoke tournament를
+  수행했다.
+- 전체 regression test 기준 `74 passed`를 확인했다.
+
 ### Step 5. 공식 RF 평가 harness 구현
 
-상태: 예정
+상태: 완료
 
 구현:
 
@@ -135,9 +142,19 @@ distance penalty: -0.5 * distance_to_finish
   확인한다.
 - illegal action이 발생하면 평가가 실패해야 한다.
 
+결과:
+
+- `scripts/evaluate_rf_target.py`를 추가했다.
+- 기본 평가 판수는 `5000`이고, `--episodes`로 변경 가능하다.
+- `pass_threshold=0.6`, `passed`, `target_opponent`,
+  `official_episodes`를 평가 JSON에 기록한다.
+- 실제 PPO checkpoint로 10판/17판 smoke 평가를 수행했고,
+  `illegal_action_count == 0`을 확인했다.
+- 전체 regression test 기준 `79 passed`를 확인했다.
+
 ### Step 6. 현재 PPO checkpoint baseline 평가
 
-상태: 예정
+상태: 완료
 
 구현:
 
@@ -148,6 +165,55 @@ distance penalty: -0.5 * distance_to_finish
 
 - 평가 JSON에 승률, illegal action count, 선/후공 분포가 기록되어야 한다.
 - `illegal_action_count`는 0이어야 한다.
+
+평가 명령:
+
+```bash
+.venv/bin/python scripts/evaluate_rf_target.py \
+  --model-path <run-dir>/model.zip \
+  --episodes 1000 \
+  --seed <seed> \
+  --device cpu \
+  --output <run-dir>/eval_project_rf_rule_1000.json \
+  --no-progress-bar
+```
+
+1000판 baseline 결과:
+
+| checkpoint | win rate | illegal actions |
+| --- | ---: | ---: |
+| `random_seed_1_10m_nenv16` | 0.433 | 0 |
+| `random_seed_2_10m_nenv16` | 0.422 | 0 |
+| `greedy_finish_seed_1_10m_nenv16` | 0.396 | 0 |
+| `random_seed_0_10m_nenv16` | 0.386 | 0 |
+| `greedy_finish_seed_2_10m_nenv16` | 0.379 | 0 |
+| `greedy_finish_seed_0_10m_nenv16` | 0.351 | 0 |
+| `capture_first_seed_0_10m_nenv16` | 0.340 | 0 |
+| `capture_first_seed_1_10m_nenv16` | 0.325 | 0 |
+| `random_seed_0_1m_nenv16` | 0.299 | 0 |
+| `capture_first_seed_2_10m_nenv16` | 0.284 | 0 |
+
+최고 1000판 후보인 `random_seed_1_10m_nenv16`은 5000판 공식 조건으로
+재평가했다.
+
+```text
+episodes: 5000
+wins: 2133
+losses: 2867
+win_rate: 0.4266
+illegal_action_count: 0
+starting_player_counts: 0=2550, 1=2450
+passed: false
+```
+
+해석:
+
+- 기존 PPO checkpoint의 현재 최고 RF 상대 기준선은 42.66%다.
+- 목표 60%까지 약 17.34%p 차이가 있어, 기존 checkpoint를 그대로 쓰는
+  것으로는 목표 달성이 어렵다.
+- 다음 단계부터는 tactical action feature와 reward shaping을 통해
+  RF 점수식 opponent에 더 직접적으로 대응하도록 학습 입력과 보상을
+  개선한다.
 
 ### Step 7. tactical action feature helper 구현
 
