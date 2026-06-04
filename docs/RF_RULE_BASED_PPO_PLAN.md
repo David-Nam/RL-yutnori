@@ -217,7 +217,7 @@ passed: false
 
 ### Step 7. tactical action feature helper 구현
 
-상태: 예정
+상태: 완료
 
 구현:
 
@@ -244,9 +244,25 @@ rf_score
 - capture, finish, illegal action, stack, waiting 상황별 feature unit test를
   추가한다.
 
+결과:
+
+- `yutnori/agents/tactical_features.py`를 추가했다.
+- `tactical_action_features(state)`는 action id 순서의 `(20, 10)`
+  `np.float32` feature matrix를 반환한다.
+- `tactical_action_feature_row(state, action)`은 legal action 하나의 feature
+  row를 반환하고, illegal action에는 `ValueError`를 발생시킨다.
+- illegal action row는 모두 0으로 둔다.
+- feature 순서는 계획의 10개 항목과 동일하게 고정했다.
+- capture, finish, illegal action, stack, waiting move 상황별 unit test를
+  추가했다.
+- 검증 결과:
+  - `tests/test_tactical_action_features.py`: `7 passed`
+  - `tests/test_baseline_agents.py`: `20 passed`
+  - 전체 regression: `86 passed`
+
 ### Step 8. tactical observation mode 구현
 
-상태: 예정
+상태: 완료
 
 구현:
 
@@ -260,6 +276,29 @@ rf_score
 - base mode shape가 기존과 동일해야 한다.
 - tactical mode shape가 증가해야 한다.
 - legal feature와 action mask가 일치해야 한다.
+
+결과:
+
+- `YutnoriEnv`에 `observation_mode="base"|"tactical"` 옵션을 추가했다.
+- 기본값은 `base`로 유지해 기존 observation shape와 동작을 보존한다.
+- `tactical` mode는 base observation 뒤에
+  `20 actions x 10 features`를 flatten해 붙인다.
+- 다음 public 상수를 추가했다.
+
+```text
+OBSERVATION_MODE_BASE
+OBSERVATION_MODE_TACTICAL
+OBSERVATION_MODES
+TACTICAL_OBSERVATION_SIZE
+```
+
+- `observation_size(observation_mode)` helper를 추가했다.
+- tactical mode의 observation space low는 tactical feature의 음수 RF score를
+  수용할 수 있도록 `-1_000_000.0`으로 설정했다.
+- 검증 결과:
+  - `tests/test_yutnori_env.py`: `14 passed`
+  - tactical/factory 관련 테스트: `15 passed`
+  - 전체 regression: `90 passed`
 
 ### Step 9. PPO train/eval에 observation mode 연결
 
