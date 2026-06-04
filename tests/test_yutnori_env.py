@@ -10,7 +10,21 @@ from yutnori.core import (
     YutResult,
     encode_action,
 )
-from yutnori.env import OBSERVATION_SIZE, POSITION_WAITING, YutnoriEnv
+from yutnori.env import (
+    OBSERVATION_SIZE,
+    POSITION_WAITING,
+    TACTICAL_OBSERVATION_SIZE,
+    YutnoriEnv,
+    observation_size,
+)
+from yutnori.agents.tactical_features import (
+    TACTICAL_ACTION_FEATURE_NAMES,
+    TACTICAL_ACTION_FEATURE_SIZE,
+)
+
+FEATURE_INDEX = {
+    name: index for index, name in enumerate(TACTICAL_ACTION_FEATURE_NAMES)
+}
 
 
 class SequenceSampler:
@@ -59,6 +73,65 @@ def test_reset_returns_vector_observation_and_mask_for_learner_turn():
         encode_action(2, YutResult.GAE),
         encode_action(3, YutResult.GAE),
     ]
+
+
+def test_observation_size_rejects_unknown_mode():
+    with pytest.raises(ValueError, match="observation_mode"):
+        observation_size("unknown")
+
+
+def test_tactical_observation_mode_appends_action_features():
+    base_env = YutnoriEnv(
+        starting_player=0,
+        yut_sampler_factory=sequence_factory([YutResult.GAE]),
+    )
+    tactical_env = YutnoriEnv(
+        starting_player=0,
+        yut_sampler_factory=sequence_factory([YutResult.GAE]),
+        observation_mode="tactical",
+    )
+
+    base_obs, _base_info = base_env.reset(seed=123)
+    tactical_obs, _tactical_info = tactical_env.reset(seed=123)
+
+    assert observation_size("base") == OBSERVATION_SIZE
+    assert observation_size("tactical") == TACTICAL_OBSERVATION_SIZE
+    assert tactical_obs.shape == (TACTICAL_OBSERVATION_SIZE,)
+    assert tactical_obs.dtype == np.float32
+    assert tactical_env.observation_space.contains(tactical_obs)
+    np.testing.assert_array_equal(tactical_obs[:OBSERVATION_SIZE], base_obs)
+
+
+def test_tactical_observation_legal_feature_matches_action_mask():
+    env = YutnoriEnv(
+        starting_player=0,
+        yut_sampler_factory=sequence_factory([YutResult.GAE]),
+        observation_mode="tactical",
+    )
+
+    obs, _info = env.reset(seed=123)
+    tactical_rows = obs[OBSERVATION_SIZE:].reshape(
+        ACTION_SIZE,
+        TACTICAL_ACTION_FEATURE_SIZE,
+    )
+
+    np.testing.assert_array_equal(
+        tactical_rows[:, FEATURE_INDEX["legal"]].astype(np.bool_),
+        env.action_masks(),
+    )
+    assert tactical_rows[
+        encode_action(0, YutResult.GAE),
+        FEATURE_INDEX["waiting_move"],
+    ] == 1.0
+    assert tactical_rows[
+        encode_action(0, YutResult.DO),
+        FEATURE_INDEX["legal"],
+    ] == 0.0
+
+
+def test_yutnori_env_rejects_unknown_observation_mode():
+    with pytest.raises(ValueError, match="observation_mode"):
+        YutnoriEnv(observation_mode="unknown")
 
 
 def test_reset_seed_reproducibly_returns_same_initial_observation_and_mask():

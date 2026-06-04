@@ -10,6 +10,10 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from yutnori.agents.tactical_features import (
+    TACTICAL_ACTION_FEATURE_SIZE,
+    tactical_action_features,
+)
 from yutnori.core import (
     ACTION_SIZE,
     PIECES_PER_PLAYER,
@@ -26,6 +30,12 @@ from yutnori.core.game import Sampler
 POSITION_WAITING = 29
 POSITION_FINISHED = 30
 OBSERVATION_SIZE = (4 + 4 + 16) * 2 + len(YUT_ORDER)
+TACTICAL_OBSERVATION_SIZE = (
+    OBSERVATION_SIZE + ACTION_SIZE * TACTICAL_ACTION_FEATURE_SIZE
+)
+OBSERVATION_MODE_BASE = "base"
+OBSERVATION_MODE_TACTICAL = "tactical"
+OBSERVATION_MODES = (OBSERVATION_MODE_BASE, OBSERVATION_MODE_TACTICAL)
 
 OpponentPolicy = Callable[[GameState, list[int]], int]
 YutSamplerFactory = Callable[[random.Random], Sampler]
@@ -47,6 +57,7 @@ class YutnoriEnv(gym.Env[np.ndarray, int]):
         starting_player: int | None = None,
         opponent_policy: OpponentPolicy | None = None,
         yut_sampler_factory: YutSamplerFactory | None = None,
+        observation_mode: str = OBSERVATION_MODE_BASE,
     ) -> None:
         if learner_player < 0 or learner_player >= PLAYER_COUNT:
             raise ValueError(f"learner_player must be in [0, {PLAYER_COUNT})")
@@ -54,19 +65,24 @@ class YutnoriEnv(gym.Env[np.ndarray, int]):
             starting_player < 0 or starting_player >= PLAYER_COUNT
         ):
             raise ValueError(f"starting_player must be in [0, {PLAYER_COUNT})")
+        if observation_mode not in OBSERVATION_MODES:
+            raise ValueError(
+                f"observation_mode must be one of {', '.join(OBSERVATION_MODES)}"
+            )
 
         self.learner_player = learner_player
         self._fixed_starting_player = starting_player
         self._opponent_policy = opponent_policy
         self._yut_sampler_factory = yut_sampler_factory
+        self.observation_mode = observation_mode
         self._rng = random.Random()
         self.state: GameState | None = None
 
         self.action_space = spaces.Discrete(ACTION_SIZE)
         self.observation_space = spaces.Box(
-            low=0.0,
+            low=_observation_space_low(observation_mode),
             high=1_000_000.0,
-            shape=(OBSERVATION_SIZE,),
+            shape=(observation_size(observation_mode),),
             dtype=np.float32,
         )
 
@@ -169,7 +185,11 @@ class YutnoriEnv(gym.Env[np.ndarray, int]):
 
     def _get_obs(self) -> np.ndarray:
         state = self._require_state()
-        return encode_observation(state, self.learner_player)
+        return encode_observation(
+            state,
+            self.learner_player,
+            observation_mode=self.observation_mode,
+        )
 
     def _reward(self) -> float:
         state = self._require_state()
@@ -218,7 +238,22 @@ class YutnoriEnv(gym.Env[np.ndarray, int]):
         }
 
 
-def encode_observation(state: GameState, player: int) -> np.ndarray:
+def observation_size(observation_mode: str = OBSERVATION_MODE_BASE) -> int:
+    if observation_mode == OBSERVATION_MODE_BASE:
+        return OBSERVATION_SIZE
+    if observation_mode == OBSERVATION_MODE_TACTICAL:
+        return TACTICAL_OBSERVATION_SIZE
+    raise ValueError(
+        f"observation_mode must be one of {', '.join(OBSERVATION_MODES)}"
+    )
+
+
+def encode_observation(
+    state: GameState,
+    player: int,
+    *,
+    observation_mode: str = OBSERVATION_MODE_BASE,
+) -> np.ndarray:
     opponent = 1 - player
     values: list[float] = []
     values.extend(_position_values(state, player))
@@ -228,7 +263,22 @@ def encode_observation(state: GameState, player: int) -> np.ndarray:
     values.extend(_status_values(state, opponent))
     values.extend(_stack_matrix_values(state, opponent))
     values.extend(float(state.pool_counts[result]) for result in YUT_ORDER)
-    return np.array(values, dtype=np.float32)
+    observation = np.array(values, dtype=np.float32)
+    if observation_mode == OBSERVATION_MODE_BASE:
+        return observation
+    if observation_mode == OBSERVATION_MODE_TACTICAL:
+        return np.concatenate(
+            [observation, tactical_action_features(state).reshape(-1)]
+        ).astype(np.float32, copy=False)
+    raise ValueError(
+        f"observation_mode must be one of {', '.join(OBSERVATION_MODES)}"
+    )
+
+
+def _observation_space_low(observation_mode: str) -> float:
+    if observation_mode == OBSERVATION_MODE_TACTICAL:
+        return -1_000_000.0
+    return 0.0
 
 
 def _position_values(state: GameState, player: int) -> list[float]:
