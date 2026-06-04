@@ -1,4 +1,11 @@
-from yutnori.agents import CaptureFirstAgent, GreedyFinishAgent, RandomAgent
+import pytest
+
+from yutnori.agents import (
+    CaptureFirstAgent,
+    GreedyFinishAgent,
+    ProjectRFRuleBasedAgent,
+    RandomAgent,
+)
 from yutnori.eval import play_game, run_tournament
 
 
@@ -50,3 +57,30 @@ def test_heuristic_baselines_beat_random_in_smoke_tournaments():
     assert greedy_result.games == 100
     assert capture_result.wins[0] + capture_result.wins[1] == 100
     assert greedy_result.wins[0] + greedy_result.wins[1] == 100
+
+
+@pytest.mark.parametrize(
+    ("agent0", "agent1", "seed"),
+    [
+        (ProjectRFRuleBasedAgent(), RandomAgent(seed=101), 111),
+        (RandomAgent(seed=102), ProjectRFRuleBasedAgent(), 112),
+        (ProjectRFRuleBasedAgent(), CaptureFirstAgent(), 113),
+        (CaptureFirstAgent(), ProjectRFRuleBasedAgent(), 114),
+        (ProjectRFRuleBasedAgent(), GreedyFinishAgent(), 115),
+        (GreedyFinishAgent(), ProjectRFRuleBasedAgent(), 116),
+    ],
+)
+def test_project_rf_rule_agent_finishes_smoke_tournaments(agent0, agent1, seed):
+    result = run_tournament(
+        agent0,
+        agent1,
+        games=100,
+        seed=seed,
+        max_decisions=10_000,
+    )
+
+    assert result.games == 100
+    assert result.wins[0] + result.wins[1] == 100
+    assert result.starting_player_counts[0] + result.starting_player_counts[1] == 100
+    assert result.average_turns > 0
+    assert result.average_decisions > 0
