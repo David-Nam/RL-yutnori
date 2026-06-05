@@ -29,6 +29,7 @@ from stable_baselines3.common.callbacks import (  # noqa: E402
 )
 from tqdm.auto import tqdm  # noqa: E402
 
+from yutnori.env import OBSERVATION_MODES  # noqa: E402
 from yutnori.training import (  # noqa: E402
     OPPONENT_NAMES,
     evaluate_maskable_policy,
@@ -41,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--total-timesteps", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--opponent", choices=OPPONENT_NAMES, default="random")
+    parser.add_argument("--observation-mode", choices=OBSERVATION_MODES, default="base")
     parser.add_argument("--n-envs", type=int, default=1)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--learning-rate", type=float, default=3e-4)
@@ -80,6 +82,7 @@ def main() -> None:
         opponent=args.opponent,
         n_envs=args.n_envs,
         seed=args.seed,
+        observation_mode=args.observation_mode,
     )
     try:
         model = MaskablePPO(
@@ -104,6 +107,7 @@ def main() -> None:
                 opponent="random",
                 episodes=args.eval_episodes,
                 seed=args.seed + 10_000,
+                observation_mode=args.observation_mode,
                 show_progress=not args.no_progress_bar,
                 progress_desc="Eval before random",
             )
@@ -124,6 +128,7 @@ def main() -> None:
                 opponent="random",
                 episodes=args.eval_episodes,
                 seed=args.seed + 20_000,
+                observation_mode=args.observation_mode,
                 show_progress=not args.no_progress_bar,
                 progress_desc="Eval after random",
             )
@@ -139,6 +144,7 @@ def main() -> None:
             "started_at": config["started_at"],
             "finished_at": datetime.now(UTC).isoformat(),
             "checkpoint_dir": config["checkpoint_dir"],
+            "observation_mode": args.observation_mode,
             "target_total_timesteps": args.total_timesteps,
             "trained_timesteps": model.num_timesteps,
             "episode_stats": episode_stats,
@@ -275,6 +281,7 @@ class MaskableEarlyStoppingCallback(BaseCallback):
         eval_episodes: int,
         opponent: str,
         seed: int,
+        observation_mode: str,
         min_timesteps: int,
         win_rate_threshold: float | None,
         patience: int,
@@ -288,6 +295,7 @@ class MaskableEarlyStoppingCallback(BaseCallback):
         self.eval_episodes = eval_episodes
         self.opponent = opponent
         self.seed = seed
+        self.observation_mode = observation_mode
         self.min_timesteps = min_timesteps
         self.win_rate_threshold = win_rate_threshold
         self.patience = patience
@@ -313,6 +321,7 @@ class MaskableEarlyStoppingCallback(BaseCallback):
             opponent=self.opponent,
             episodes=self.eval_episodes,
             seed=self.seed + self._eval_index,
+            observation_mode=self.observation_mode,
             show_progress=self.show_progress,
             progress_desc=f"Early eval {self._eval_index + 1}",
         )
@@ -332,6 +341,7 @@ class MaskableEarlyStoppingCallback(BaseCallback):
             "evaluated_at": datetime.now(UTC).isoformat(),
             "timesteps": self.num_timesteps,
             "eval_index": self._eval_index,
+            "observation_mode": self.observation_mode,
             "best_win_rate": self._best_win_rate,
             "improved": improved,
             "no_improvement_count": self._no_improvement_count,
@@ -567,6 +577,7 @@ def _early_stopping_callback(
         eval_episodes=args.early_stop_eval_episodes,
         opponent=args.early_stop_opponent,
         seed=args.seed + 30_000,
+        observation_mode=args.observation_mode,
         min_timesteps=args.early_stop_min_timesteps,
         win_rate_threshold=args.early_stop_win_rate,
         patience=args.early_stop_patience,
@@ -593,6 +604,7 @@ def _config_dict(args: argparse.Namespace, run_dir: Path) -> dict[str, Any]:
         "started_at": datetime.now(UTC).isoformat(),
         "seed": args.seed,
         "opponent": args.opponent,
+        "observation_mode": args.observation_mode,
         "total_timesteps": args.total_timesteps,
         "n_envs": args.n_envs,
         "device": args.device,

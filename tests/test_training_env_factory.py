@@ -4,6 +4,7 @@ from sb3_contrib.common.maskable.utils import get_action_masks
 
 from yutnori.agents import ProjectRFRuleBasedAgent
 from yutnori.core import ACTION_SIZE
+from yutnori.env import TACTICAL_OBSERVATION_SIZE
 from yutnori.training import OPPONENT_NAMES, make_yutnori_env, make_yutnori_vec_env
 from yutnori.training.env_factory import make_opponent
 
@@ -70,6 +71,46 @@ def test_make_yutnori_vec_env_exposes_action_masks():
         masks = get_action_masks(vec_env)
 
         assert obs.shape[0] == 2
+        assert masks.dtype == np.bool_
+        assert masks.shape == (2, ACTION_SIZE)
+        assert masks.any(axis=1).all()
+    finally:
+        vec_env.close()
+
+
+def test_make_yutnori_env_supports_tactical_observation_mode():
+    env = make_yutnori_env(
+        opponent="project_rf_rule",
+        seed=41,
+        observation_mode="tactical",
+    )
+
+    try:
+        obs, _info = env.reset(seed=42)
+        mask = env.action_masks()
+
+        assert obs.shape == (TACTICAL_OBSERVATION_SIZE,)
+        assert env.observation_space.contains(obs)
+        assert mask.dtype == np.bool_
+        assert mask.shape == (ACTION_SIZE,)
+        assert mask.any()
+    finally:
+        env.close()
+
+
+def test_make_yutnori_vec_env_supports_tactical_observation_mode():
+    vec_env = make_yutnori_vec_env(
+        opponent="project_rf_rule",
+        n_envs=2,
+        seed=51,
+        observation_mode="tactical",
+    )
+
+    try:
+        obs = vec_env.reset()
+        masks = get_action_masks(vec_env)
+
+        assert obs.shape == (2, TACTICAL_OBSERVATION_SIZE)
         assert masks.dtype == np.bool_
         assert masks.shape == (2, ACTION_SIZE)
         assert masks.any(axis=1).all()

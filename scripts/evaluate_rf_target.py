@@ -19,7 +19,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from sb3_contrib import MaskablePPO  # noqa: E402
 
-from yutnori.training import PolicyEvaluationResult, evaluate_maskable_policy  # noqa: E402
+from yutnori.env import OBSERVATION_MODES  # noqa: E402
+from yutnori.training import (  # noqa: E402
+    PolicyEvaluationResult,
+    evaluate_maskable_policy,
+    resolve_model_observation_mode,
+)
 
 TARGET_OPPONENT = "project_rf_rule"
 DEFAULT_EPISODES = 5_000
@@ -33,6 +38,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--episodes", type=int, default=DEFAULT_EPISODES)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--observation-mode", choices=OBSERVATION_MODES, default=None)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--max-decisions", type=int, default=10_000)
     parser.add_argument("--pass-threshold", type=float, default=DEFAULT_PASS_THRESHOLD)
@@ -45,12 +51,17 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     _validate_args(args)
 
+    observation_mode = resolve_model_observation_mode(
+        args.model_path,
+        args.observation_mode,
+    )
     model = MaskablePPO.load(args.model_path, device=args.device)
     result = evaluate_maskable_policy(
         model,
         opponent=TARGET_OPPONENT,
         episodes=args.episodes,
         seed=args.seed,
+        observation_mode=observation_mode,
         deterministic=not args.stochastic,
         max_decisions=args.max_decisions,
         show_progress=not args.no_progress_bar,
@@ -60,6 +71,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         result,
         model_path=args.model_path,
         deterministic=not args.stochastic,
+        observation_mode=observation_mode,
         pass_threshold=args.pass_threshold,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -72,12 +84,14 @@ def build_payload(
     *,
     model_path: Path,
     deterministic: bool,
+    observation_mode: str,
     pass_threshold: float = DEFAULT_PASS_THRESHOLD,
 ) -> dict[str, Any]:
     return {
         "model_path": str(model_path),
         "evaluated_at": datetime.now(UTC).isoformat(),
         "deterministic": deterministic,
+        "observation_mode": observation_mode,
         "target_opponent": TARGET_OPPONENT,
         "official_episodes": result.episodes,
         "pass_threshold": pass_threshold,

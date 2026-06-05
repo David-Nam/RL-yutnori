@@ -6,6 +6,7 @@ from yutnori.training.env_factory import (
     make_yutnori_env,
     make_yutnori_vec_env,
 )
+from yutnori.training.model_config import resolve_model_observation_mode
 from yutnori.training.ppo_evaluation import (
     PolicyEvaluationResult,
     evaluate_maskable_policy,
@@ -18,4 +19,5 @@ __all__ = [
     "make_opponent",
     "make_yutnori_env",
     "make_yutnori_vec_env",
+    "resolve_model_observation_mode",
 ]

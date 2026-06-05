@@ -8,6 +8,7 @@ from typing import Protocol
 import numpy as np
 from tqdm.auto import tqdm
 
+from yutnori.env import OBSERVATION_MODE_BASE
 from yutnori.training.env_factory import make_yutnori_env
 
 
@@ -61,6 +62,7 @@ def evaluate_maskable_policy(
     episodes: int,
     seed: int,
     learner_player: int = 0,
+    observation_mode: str = OBSERVATION_MODE_BASE,
     deterministic: bool = True,
     max_decisions: int = 10_000,
     show_progress: bool = False,
@@ -77,6 +79,7 @@ def evaluate_maskable_policy(
         opponent=opponent,
         seed=seed,
         learner_player=learner_player,
+        observation_mode=observation_mode,
     )
     wins = 0
     total_turns = 0

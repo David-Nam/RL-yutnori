@@ -20,6 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
+from yutnori.env import OBSERVATION_MODE_BASE, OBSERVATION_MODES  # noqa: E402
 from yutnori.training.env_factory import OPPONENT_NAMES  # noqa: E402
 
 
@@ -32,6 +33,7 @@ def parse_args() -> argparse.Namespace:
         default=list(OPPONENT_NAMES),
     )
     parser.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
+    parser.add_argument("--observation-mode", choices=OBSERVATION_MODES, default="base")
     parser.add_argument("--total-timesteps", type=int, default=10_000_000)
     parser.add_argument("--timesteps-label", default=None)
     parser.add_argument("--n-envs", type=int, default=16)
@@ -64,7 +66,13 @@ def main() -> None:
     timesteps_label = args.timesteps_label or _timesteps_label(args.total_timesteps)
     for opponent in args.opponents:
         for seed in args.seeds:
-            run_name = f"{opponent}_seed_{seed}_{timesteps_label}_nenv{args.n_envs}"
+            run_name = _run_name(
+                opponent,
+                seed,
+                timesteps_label,
+                args.n_envs,
+                args.observation_mode,
+            )
             run_dir = args.runs_root / run_name
             log_path = args.logs_root / f"{run_name}.log"
             _run_one(args, opponent, seed, run_dir, log_path)
@@ -147,6 +155,8 @@ def _train_command(
         str(seed),
         "--opponent",
         opponent,
+        "--observation-mode",
+        args.observation_mode,
         "--n-envs",
         str(args.n_envs),
         "--device",
@@ -192,6 +202,8 @@ def _eval_command(
         str(model_path),
         "--opponent",
         opponent,
+        "--observation-mode",
+        args.observation_mode,
         "--episodes",
         str(args.final_eval_episodes),
         "--seed",
@@ -313,6 +325,21 @@ def _timesteps_label(total_timesteps: int) -> str:
     if total_timesteps % 1_000 == 0:
         return f"{total_timesteps // 1_000}k"
     return str(total_timesteps)
+
+
+def _run_name(
+    opponent: str,
+    seed: int,
+    timesteps_label: str,
+    n_envs: int,
+    observation_mode: str,
+) -> str:
+    mode_suffix = (
+        ""
+        if observation_mode == OBSERVATION_MODE_BASE
+        else f"_{observation_mode}"
+    )
+    return f"{opponent}_seed_{seed}_{timesteps_label}_nenv{n_envs}{mode_suffix}"
 
 
 if __name__ == "__main__":

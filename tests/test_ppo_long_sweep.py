@@ -1,6 +1,13 @@
+from argparse import Namespace
 from io import BytesIO
+from pathlib import Path
 
-from scripts.run_ppo_long_sweep import _CarriageReturnLogFilter
+from scripts.run_ppo_long_sweep import (
+    _CarriageReturnLogFilter,
+    _eval_command,
+    _run_name,
+    _train_command,
+)
 
 
 def _filtered_log(*chunks: bytes) -> bytes:
@@ -34,3 +41,62 @@ def test_progress_log_filter_flushes_final_unterminated_line():
     output = _filtered_log(b"\rEvaluate random: 100%")
 
     assert output == b"Evaluate random: 100%\n"
+
+
+def test_run_name_keeps_base_names_backward_compatible():
+    assert _run_name("random", 1, "10m", 16, "base") == (
+        "random_seed_1_10m_nenv16"
+    )
+
+
+def test_run_name_adds_suffix_for_tactical_observations():
+    assert _run_name("random", 1, "10m", 16, "tactical") == (
+        "random_seed_1_10m_nenv16_tactical"
+    )
+
+
+def test_train_command_passes_observation_mode():
+    command = _train_command(
+        _args(observation_mode="tactical"),
+        "project_rf_rule",
+        7,
+        Path("runs/ppo/project_rf_rule_seed_7"),
+    )
+
+    mode_index = command.index("--observation-mode")
+    assert command[mode_index + 1] == "tactical"
+
+
+def test_eval_command_passes_observation_mode():
+    command = _eval_command(
+        _args(observation_mode="tactical"),
+        Path("runs/ppo/model.zip"),
+        "project_rf_rule",
+        7,
+        Path("runs/ppo/eval.json"),
+    )
+
+    mode_index = command.index("--observation-mode")
+    assert command[mode_index + 1] == "tactical"
+
+
+def _args(**overrides):
+    defaults = {
+        "total_timesteps": 10_000,
+        "n_envs": 2,
+        "device": "cpu",
+        "learning_rate": 3e-4,
+        "n_steps": 64,
+        "batch_size": 64,
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "ent_coef": 0.0,
+        "checkpoint_freq": 0,
+        "train_eval_episodes": 0,
+        "final_eval_episodes": 10,
+        "overwrite": False,
+        "no_progress_bar": True,
+        "observation_mode": "base",
+    }
+    defaults.update(overrides)
+    return Namespace(**defaults)

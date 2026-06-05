@@ -49,8 +49,8 @@ distance penalty: -0.5 * distance_to_finish
 ## 4. 개발 단계
 
 각 단계는 개발 후 검증까지 완료하면 커밋 가능한 크기로 나눈다. 단계가
-끝나면 변경 내용, 검증 방법, 검증 결과를 보고하고 사용자 확인 후 다음
-단계로 진행한다.
+끝나면 변경 내용, 검증 방법, 검증 결과를 이 문서에 먼저 반영한 뒤
+보고하고, 사용자 확인 후 다음 단계로 진행한다.
 
 ### Step 1. RF action score helper 구현
 
@@ -302,7 +302,7 @@ TACTICAL_OBSERVATION_SIZE
 
 ### Step 9. PPO train/eval에 observation mode 연결
 
-상태: 예정
+상태: 완료
 
 구현:
 
@@ -315,6 +315,116 @@ TACTICAL_OBSERVATION_SIZE
 
 - base/tactical 각각 짧은 PPO smoke 학습 및 평가를 수행한다.
 - observation mode mismatch 없이 저장 모델 평가가 가능해야 한다.
+
+결과:
+
+- `make_yutnori_env()`와 `make_yutnori_vec_env()`에
+  `observation_mode` 인자를 추가했다.
+- 기본값은 `base`로 유지해 기존 학습/평가 경로의 observation shape를
+  보존했다.
+- `scripts/train_ppo.py`에 `--observation-mode base|tactical` 옵션을
+  추가했다.
+- train vec env, 학습 전/후 평가, early stopping 평가가 모두 같은
+  observation mode를 사용하도록 연결했다.
+- `config.json`, `summary.json`, early stopping eval log에
+  `observation_mode`를 기록하도록 했다.
+- `resolve_model_observation_mode(model_path, requested_observation_mode)`를
+  추가했다.
+  - CLI에서 명시한 mode가 있으면 우선한다.
+  - 명시하지 않으면 `model.zip`과 같은 directory의 `config.json`에서
+    `observation_mode`를 읽는다.
+  - `config.json`이 없으면 backward compatibility를 위해 `base`를
+    사용한다.
+  - 알 수 없는 mode는 `ValueError`로 실패시킨다.
+- `scripts/evaluate_ppo.py`와 `scripts/evaluate_rf_target.py`에
+  `--observation-mode` 옵션을 추가했다.
+- 평가 결과 JSON에 `observation_mode`를 기록하도록 했다.
+- `scripts/run_ppo_long_sweep.py`도 observation mode를 train/eval command에
+  전달하도록 했다.
+- long sweep run name은 `base`에서는 기존 이름을 유지하고, `tactical`에서는
+  `_tactical` suffix를 붙이도록 했다.
+
+검증 결과:
+
+- 관련 테스트:
+
+```text
+.venv/bin/python -m pytest \
+  tests/test_training_env_factory.py \
+  tests/test_model_config.py \
+  tests/test_evaluate_rf_target.py \
+  tests/test_ppo_long_sweep.py -q
+
+27 passed
+```
+
+- tactical PPO smoke 학습:
+
+```text
+.venv/bin/python scripts/train_ppo.py \
+  --total-timesteps 64 \
+  --n-steps 8 \
+  --batch-size 8 \
+  --n-envs 1 \
+  --opponent project_rf_rule \
+  --observation-mode tactical \
+  --run-dir /tmp/ppo_tactical_smoke \
+  --eval-episodes 0 \
+  --device cpu \
+  --overwrite \
+  --no-progress-bar
+```
+
+  - `trained_timesteps`: `64`
+  - `observation_mode`: `tactical`
+  - model 저장 위치: `/tmp/ppo_tactical_smoke/model.zip`
+
+- 일반 evaluator smoke:
+
+```text
+.venv/bin/python scripts/evaluate_ppo.py \
+  --model-path /tmp/ppo_tactical_smoke/model.zip \
+  --episodes 2 \
+  --opponent project_rf_rule \
+  --device cpu \
+  --output /tmp/ppo_tactical_eval.json \
+  --no-progress-bar
+```
+
+  - `--observation-mode` 생략 상태에서 `config.json` 기반 tactical mode
+    자동 추론 확인
+  - `illegal_action_count`: `0`
+
+- RF target evaluator smoke:
+
+```text
+.venv/bin/python scripts/evaluate_rf_target.py \
+  --model-path /tmp/ppo_tactical_smoke/model.zip \
+  --episodes 2 \
+  --device cpu \
+  --output /tmp/ppo_tactical_rf_eval.json \
+  --no-progress-bar
+```
+
+  - `--observation-mode` 생략 상태에서 `config.json` 기반 tactical mode
+    자동 추론 확인
+  - `illegal_action_count`: `0`
+
+- 전체 regression:
+
+```text
+.venv/bin/python -m pytest -q
+
+101 passed
+```
+
+- diff whitespace check:
+
+```text
+git diff --check
+
+no output
+```
 
 ### Step 10. RF shaped reward helper 구현
 

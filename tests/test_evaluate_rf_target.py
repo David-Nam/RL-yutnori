@@ -26,6 +26,7 @@ def test_rf_target_eval_defaults_to_official_episode_count():
     assert args.episodes == DEFAULT_EPISODES
     assert args.pass_threshold == DEFAULT_PASS_THRESHOLD
     assert args.seed == 100_000
+    assert args.observation_mode is None
 
 
 def test_rf_target_eval_allows_custom_episode_count():
@@ -41,6 +42,21 @@ def test_rf_target_eval_allows_custom_episode_count():
     )
 
     assert args.episodes == 17
+
+
+def test_rf_target_eval_allows_explicit_observation_mode():
+    args = parse_args(
+        [
+            "--model-path",
+            "model.zip",
+            "--observation-mode",
+            "tactical",
+            "--output",
+            "eval.json",
+        ]
+    )
+
+    assert args.observation_mode == "tactical"
 
 
 def test_rf_target_payload_marks_passing_result():
@@ -61,11 +77,13 @@ def test_rf_target_payload_marks_passing_result():
         result,
         model_path=Path("runs/model.zip"),
         deterministic=True,
+        observation_mode="tactical",
     )
 
     assert payload["target_opponent"] == TARGET_OPPONENT
     assert payload["official_episodes"] == 17
     assert payload["pass_threshold"] == DEFAULT_PASS_THRESHOLD
+    assert payload["observation_mode"] == "tactical"
     assert payload["passed"] is True
     assert payload["episodes"] == 17
     assert payload["win_rate"] == pytest.approx(11 / 17)
@@ -89,9 +107,11 @@ def test_rf_target_payload_marks_failing_result():
         result,
         model_path=Path("runs/model.zip"),
         deterministic=False,
+        observation_mode="base",
     )
 
     assert payload["deterministic"] is False
+    assert payload["observation_mode"] == "base"
     assert payload["passed"] is False
 
 

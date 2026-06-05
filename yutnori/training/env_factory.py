@@ -13,7 +13,7 @@ from yutnori.agents import (
     ProjectRFRuleBasedAgent,
     RandomAgent,
 )
-from yutnori.env import YutnoriEnv
+from yutnori.env import OBSERVATION_MODE_BASE, YutnoriEnv
 
 OPPONENT_NAMES = ("random", "capture_first", "greedy_finish", "project_rf_rule")
 
@@ -40,6 +40,7 @@ def make_yutnori_env(
     seed: int | None = None,
     learner_player: int = 0,
     starting_player: int | None = None,
+    observation_mode: str = OBSERVATION_MODE_BASE,
 ) -> YutnoriEnv:
     """Create a single Gymnasium env with a seeded baseline opponent."""
 
@@ -48,6 +49,7 @@ def make_yutnori_env(
         learner_player=learner_player,
         starting_player=starting_player,
         opponent_policy=opponent_agent.select_action,
+        observation_mode=observation_mode,
     )
     if seed is not None:
         env.action_space.seed(seed)
@@ -62,6 +64,7 @@ def make_yutnori_vec_env(
     seed: int | None = None,
     learner_player: int = 0,
     starting_player: int | None = None,
+    observation_mode: str = OBSERVATION_MODE_BASE,
 ) -> VecEnv:
     """Create a DummyVecEnv whose child envs expose ``action_masks()``."""
 
@@ -78,6 +81,7 @@ def make_yutnori_vec_env(
                 seed=env_seed,
                 learner_player=learner_player,
                 starting_player=starting_player,
+                observation_mode=observation_mode,
             )
 
         env_fns.append(_init)
