@@ -428,7 +428,7 @@ no output
 
 ### Step 10. RF shaped reward helper 구현
 
-상태: 예정
+상태: 완료
 
 구현:
 
@@ -446,6 +446,52 @@ opponent finish: -0.15 * finished_count
 검증:
 
 - learner/opponent capture, finish, shortcut event별 unit test를 추가한다.
+
+결과:
+
+- `yutnori/training/reward_shaping.py`를 추가했다.
+- 다음 shaping 상수를 추가했다.
+
+```text
+RF_SHAPING_CAPTURE_WEIGHT = 0.08
+RF_SHAPING_FINISH_WEIGHT = 0.15
+RF_SHAPING_SHORTCUT_BONUS = 0.02
+```
+
+- `project_rf_event_shaping_reward(event, learner_player=...)`를 추가했다.
+  - learner event의 capture는 `+0.08 * captured_count`로 계산한다.
+  - learner event의 finish는 `+0.15 * finished_count`로 계산한다.
+  - learner event의 shortcut은 `+0.02`로 계산한다.
+  - opponent event의 capture는 `-0.08 * captured_count`로 계산한다.
+  - opponent event의 finish는 `-0.15 * finished_count`로 계산한다.
+  - opponent shortcut은 계획대로 패널티를 주지 않는다.
+- `project_rf_events_shaping_reward(learner_event, opponent_events, ...)`를
+  추가했다.
+  - Step 11에서 `YutnoriEnv.step()`의 learner event와 opponent events를
+    합산할 때 사용할 수 있다.
+- 잘못된 `learner_player` 또는 `event.actor` 값은 `ValueError`로 실패하도록
+  했다.
+- helper와 상수는 `yutnori.training`에서 public import 가능하도록 export했다.
+
+검증 결과:
+
+- 관련 테스트:
+
+```text
+.venv/bin/python -m pytest \
+  tests/test_reward_shaping.py \
+  tests/test_training_env_factory.py -q
+
+18 passed
+```
+
+- 전체 regression:
+
+```text
+.venv/bin/python -m pytest -q
+
+109 passed
+```
 
 ### Step 11. reward mode env 연결
 
