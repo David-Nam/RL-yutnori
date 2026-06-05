@@ -679,7 +679,7 @@ shaping_reward
 
 ### Step 13. 소규모 PPO sweep 실행
 
-상태: 예정
+상태: 완료
 
 실험 조합:
 
@@ -701,14 +701,186 @@ shaping_reward
 - 모든 평가에서 `illegal_action_count == 0`이어야 한다.
 - 장기 학습 후보 1~2개를 수치로 선택할 수 있어야 한다.
 
+실행 준비:
+
+- `scripts/run_step13_gpu_sweep.sh`를 추가했다.
+- 스크립트는 아래 네 조합을 순차 실행한다.
+
+```text
+base + terminal
+base + rf_shaped
+tactical + terminal
+tactical + rf_shaped
+```
+
+- 각 조합은 `run_ppo_long_sweep.py`를 호출하며, progress bar가 보이도록
+  `--no-progress-bar`를 전달하지 않는다.
+- 기본 설정은 다음과 같다.
+
+```text
+opponent: project_rf_rule
+seeds: 0 1 2
+total_timesteps: 3000000
+timesteps_label: 3m
+n_envs: 16
+device: cuda
+train_eval_episodes: 100
+final_eval_episodes: 1000
+checkpoint_freq: 0
+runs_root: runs/ppo_step13_gpu_sweep_full
+logs_root: logs/ppo_step13_gpu_sweep_full
+```
+
+- 사용자 터미널에서 GPU가 보이는 환경이면 다음처럼 실행한다.
+
+```bash
+cd /home/david-nam/work-space/RL-yutnori
+scripts/run_step13_gpu_sweep.sh
+```
+
+- 특정 GPU를 지정하려면 다음처럼 실행한다.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 scripts/run_step13_gpu_sweep.sh
+```
+
+- 설정을 바꾸려면 환경변수를 사용한다.
+
+```bash
+TOTAL_TIMESTEPS=5000000 \
+TIMESTEPS_LABEL=5m \
+SEEDS="0 1 2" \
+scripts/run_step13_gpu_sweep.sh
+```
+
+- 기존 run directory와 충돌하는 경우에는 새 `RUNS_ROOT`/`LOGS_ROOT`를
+  지정하거나, 의도적으로 다시 돌릴 때만 `--overwrite`를 추가한다.
+
+검증 결과:
+
+- 스크립트 문법 검사:
+
+```text
+bash -n scripts/run_step13_gpu_sweep.sh
+
+passed
+```
+
+- `/tmp` 출력 경로로 dry-run을 실행해 네 조합이 순차 생성되는지 확인했다.
+
+```text
+RUNS_ROOT=/tmp/ppo_step13_gpu_sweep_dry_runs \
+LOGS_ROOT=/tmp/ppo_step13_gpu_sweep_dry_logs \
+scripts/run_step13_gpu_sweep.sh --dry-run
+
+passed
+```
+
+실행 결과:
+
+- 실행 경로: `runs/ppo_step13_gpu_sweep_full`
+- log 경로: `logs/ppo_step13_gpu_sweep_full`
+- 실행 환경:
+  - device: `cuda`
+  - GPU: `NVIDIA A100-SXM4-40GB`
+  - seeds: `0, 1, 2`
+  - timesteps: `3,000,000`
+  - n_envs: `16`
+  - final eval: `project_rf_rule` 상대 `1000`판
+- artifact 검증:
+  - 12개 run 모두 `model.zip`, `config.json`, `summary.json`,
+    `eval_project_rf_rule_1000.json` 생성 확인
+  - 모든 RF target 평가에서 `illegal_action_count == 0`
+  - starting player 분포는 각 평가에서 `508/492` 또는 `509/491`로 정상
+
+RF target 1000판 평가 결과:
+
+| observation | reward | seed 0 | seed 1 | seed 2 | mean | min | max |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| base | terminal | 0.397 | 0.372 | 0.353 | 0.374 | 0.353 | 0.397 |
+| base | rf_shaped | 0.283 | 0.323 | 0.365 | 0.324 | 0.283 | 0.365 |
+| tactical | terminal | 0.525 | 0.545 | 0.528 | 0.533 | 0.525 | 0.545 |
+| tactical | rf_shaped | 0.512 | 0.519 | 0.539 | 0.523 | 0.512 | 0.539 |
+
+보조 상대 1000판 평균 승률:
+
+| observation | reward | random | capture_first | greedy_finish |
+| --- | --- | ---: | ---: | ---: |
+| base | terminal | 0.650 | 0.286 | 0.738 |
+| base | rf_shaped | 0.582 | 0.347 | 0.588 |
+| tactical | terminal | 0.797 | 0.471 | 0.751 |
+| tactical | rf_shaped | 0.757 | 0.510 | 0.616 |
+
+해석:
+
+- `tactical` observation은 RF target 승률을 크게 끌어올렸다.
+  - `base + terminal`: 평균 `0.374`
+  - `tactical + terminal`: 평균 `0.533`
+  - `base + rf_shaped`: 평균 `0.324`
+  - `tactical + rf_shaped`: 평균 `0.523`
+- `rf_shaped` reward는 이번 3M sweep에서 RF target 평균 승률을 올리지 못했다.
+  - base에서는 `0.374 -> 0.324`로 하락했다.
+  - tactical에서는 `0.533 -> 0.523`으로 소폭 하락했다.
+- 다만 `tactical + rf_shaped`는 `capture_first` 상대 평균 승률이 가장 높다.
+  - `tactical + terminal`: `0.471`
+  - `tactical + rf_shaped`: `0.510`
+  - capture 성향 전술은 개선됐지만, RF target과 greedy_finish 상대에서는
+    terminal reward 쪽이 더 안정적이었다.
+- Step 14의 1순위 장기 학습 후보는 `tactical + terminal`로 둔다.
+- Step 14의 2순위 비교 후보는 `tactical + rf_shaped`로 둔다.
+- `base` observation 조합은 RF target 기준으로 60% 목표와 거리가 있어
+  장기 학습 우선순위에서 제외한다.
+
+결론:
+
+- 현재까지의 가장 강한 결론은 성능 향상의 핵심이 reward shaping보다
+  `tactical` observation에 있다는 점이다.
+- 3M sweep 기준 1순위 후보는 `tactical + terminal`이다.
+  - RF target 평균 승률: `0.533`
+  - seed별 범위: `0.525~0.545`
+  - seed 편차가 작아 장기 학습 후보로 안정적이다.
+- `rf_shaped` reward는 capture 관련 전술을 강화하는 효과는 보였지만,
+  RF target 전체 승률을 올리지는 못했다.
+  - `tactical + terminal`의 `capture_first` 평균 승률: `0.471`
+  - `tactical + rf_shaped`의 `capture_first` 평균 승률: `0.510`
+  - 반면 RF target 평균은 `0.533 -> 0.523`으로 내려갔다.
+- 현재 `rf_shaped` reward는 실제 capture/captured event에 대한 결과 기반
+  보상/패널티는 포함하지만, 상대가 다음 턴에 잡기 쉬운 위치를 피하는
+  위험도 기반 penalty는 포함하지 않는다.
+- 따라서 다음 실험에서 reward를 더 조정하기보다 먼저
+  `tactical + terminal`의 장기 학습 상한을 확인하는 것이 합리적이다.
+- 장기 학습 후에도 승률이 목표에 부족하면, reward weight를 단순 조정하기보다
+  hybrid policy 또는 capture-risk feature/reward를 별도 개선 후보로 검토한다.
+
 ### Step 14. 장기 PPO 후보 학습 및 공식 검증
 
 상태: 예정
 
 구현:
 
-- 소규모 sweep 상위 후보를 `10M~20M` timesteps로 학습한다.
+- 소규모 sweep 1순위 후보인 `tactical + terminal`을 `10M~20M`
+  timesteps로 학습한다.
+- 비교가 필요하면 2순위 후보인 `tactical + rf_shaped`도 같은 조건으로
+  학습한다.
 - 공식 harness로 5000판 평가를 seed 3개 이상 실행한다.
+
+권장 진행:
+
+- 1차 장기 학습:
+  - observation: `tactical`
+  - reward: `terminal`
+  - opponent: `project_rf_rule`
+  - seeds: `0, 1, 2`
+  - timesteps: `10M`
+  - eval games: `5000`
+- 1차 결과가 `58~60%` 근처까지 상승하면 같은 구성을 `20M`까지 확장한다.
+- 1차 결과가 `53~55%`대에 머물면 pure PPO만으로는 목표 달성이 불확실하므로
+  Step 15 hybrid policy 구현 우선순위를 높인다.
+- `tactical + terminal`의 장기 학습이 불안정하거나 특정 seed에서 크게 무너지면
+  `tactical + rf_shaped`를 같은 조건으로 비교한다.
+- `tactical + rf_shaped`가 장기에서도 RF target을 역전하지 못하면 현재
+  `rf_shaped` reward는 우선 후보에서 제외하고, 필요 시 capture-risk 기반
+  reward/feature로 재설계한다.
 
 검증:
 
