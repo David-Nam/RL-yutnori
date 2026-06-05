@@ -29,7 +29,7 @@ from stable_baselines3.common.callbacks import (  # noqa: E402
 )
 from tqdm.auto import tqdm  # noqa: E402
 
-from yutnori.env import OBSERVATION_MODES  # noqa: E402
+from yutnori.env import OBSERVATION_MODES, REWARD_MODES  # noqa: E402
 from yutnori.training import (  # noqa: E402
     OPPONENT_NAMES,
     evaluate_maskable_policy,
@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--opponent", choices=OPPONENT_NAMES, default="random")
     parser.add_argument("--observation-mode", choices=OBSERVATION_MODES, default="base")
+    parser.add_argument("--reward-mode", choices=REWARD_MODES, default="terminal")
     parser.add_argument("--n-envs", type=int, default=1)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--learning-rate", type=float, default=3e-4)
@@ -83,6 +84,7 @@ def main() -> None:
         n_envs=args.n_envs,
         seed=args.seed,
         observation_mode=args.observation_mode,
+        reward_mode=args.reward_mode,
     )
     try:
         model = MaskablePPO(
@@ -108,6 +110,7 @@ def main() -> None:
                 episodes=args.eval_episodes,
                 seed=args.seed + 10_000,
                 observation_mode=args.observation_mode,
+                reward_mode=args.reward_mode,
                 show_progress=not args.no_progress_bar,
                 progress_desc="Eval before random",
             )
@@ -129,6 +132,7 @@ def main() -> None:
                 episodes=args.eval_episodes,
                 seed=args.seed + 20_000,
                 observation_mode=args.observation_mode,
+                reward_mode=args.reward_mode,
                 show_progress=not args.no_progress_bar,
                 progress_desc="Eval after random",
             )
@@ -145,6 +149,7 @@ def main() -> None:
             "finished_at": datetime.now(UTC).isoformat(),
             "checkpoint_dir": config["checkpoint_dir"],
             "observation_mode": args.observation_mode,
+            "reward_mode": args.reward_mode,
             "target_total_timesteps": args.total_timesteps,
             "trained_timesteps": model.num_timesteps,
             "episode_stats": episode_stats,
@@ -282,6 +287,7 @@ class MaskableEarlyStoppingCallback(BaseCallback):
         opponent: str,
         seed: int,
         observation_mode: str,
+        reward_mode: str,
         min_timesteps: int,
         win_rate_threshold: float | None,
         patience: int,
@@ -296,6 +302,7 @@ class MaskableEarlyStoppingCallback(BaseCallback):
         self.opponent = opponent
         self.seed = seed
         self.observation_mode = observation_mode
+        self.reward_mode = reward_mode
         self.min_timesteps = min_timesteps
         self.win_rate_threshold = win_rate_threshold
         self.patience = patience
@@ -322,6 +329,7 @@ class MaskableEarlyStoppingCallback(BaseCallback):
             episodes=self.eval_episodes,
             seed=self.seed + self._eval_index,
             observation_mode=self.observation_mode,
+            reward_mode=self.reward_mode,
             show_progress=self.show_progress,
             progress_desc=f"Early eval {self._eval_index + 1}",
         )
@@ -342,6 +350,7 @@ class MaskableEarlyStoppingCallback(BaseCallback):
             "timesteps": self.num_timesteps,
             "eval_index": self._eval_index,
             "observation_mode": self.observation_mode,
+            "reward_mode": self.reward_mode,
             "best_win_rate": self._best_win_rate,
             "improved": improved,
             "no_improvement_count": self._no_improvement_count,
@@ -578,6 +587,7 @@ def _early_stopping_callback(
         opponent=args.early_stop_opponent,
         seed=args.seed + 30_000,
         observation_mode=args.observation_mode,
+        reward_mode=args.reward_mode,
         min_timesteps=args.early_stop_min_timesteps,
         win_rate_threshold=args.early_stop_win_rate,
         patience=args.early_stop_patience,
@@ -605,6 +615,7 @@ def _config_dict(args: argparse.Namespace, run_dir: Path) -> dict[str, Any]:
         "seed": args.seed,
         "opponent": args.opponent,
         "observation_mode": args.observation_mode,
+        "reward_mode": args.reward_mode,
         "total_timesteps": args.total_timesteps,
         "n_envs": args.n_envs,
         "device": args.device,

@@ -44,14 +44,26 @@ def test_progress_log_filter_flushes_final_unterminated_line():
 
 
 def test_run_name_keeps_base_names_backward_compatible():
-    assert _run_name("random", 1, "10m", 16, "base") == (
+    assert _run_name("random", 1, "10m", 16, "base", "terminal") == (
         "random_seed_1_10m_nenv16"
     )
 
 
 def test_run_name_adds_suffix_for_tactical_observations():
-    assert _run_name("random", 1, "10m", 16, "tactical") == (
+    assert _run_name("random", 1, "10m", 16, "tactical", "terminal") == (
         "random_seed_1_10m_nenv16_tactical"
+    )
+
+
+def test_run_name_adds_suffix_for_rf_shaped_reward():
+    assert _run_name("random", 1, "10m", 16, "base", "rf_shaped") == (
+        "random_seed_1_10m_nenv16_rf_shaped"
+    )
+
+
+def test_run_name_combines_observation_and_reward_suffixes():
+    assert _run_name("random", 1, "10m", 16, "tactical", "rf_shaped") == (
+        "random_seed_1_10m_nenv16_tactical_rf_shaped"
     )
 
 
@@ -67,6 +79,18 @@ def test_train_command_passes_observation_mode():
     assert command[mode_index + 1] == "tactical"
 
 
+def test_train_command_passes_reward_mode():
+    command = _train_command(
+        _args(reward_mode="rf_shaped"),
+        "project_rf_rule",
+        7,
+        Path("runs/ppo/project_rf_rule_seed_7"),
+    )
+
+    mode_index = command.index("--reward-mode")
+    assert command[mode_index + 1] == "rf_shaped"
+
+
 def test_eval_command_passes_observation_mode():
     command = _eval_command(
         _args(observation_mode="tactical"),
@@ -78,6 +102,19 @@ def test_eval_command_passes_observation_mode():
 
     mode_index = command.index("--observation-mode")
     assert command[mode_index + 1] == "tactical"
+
+
+def test_eval_command_passes_reward_mode():
+    command = _eval_command(
+        _args(reward_mode="rf_shaped"),
+        Path("runs/ppo/model.zip"),
+        "project_rf_rule",
+        7,
+        Path("runs/ppo/eval.json"),
+    )
+
+    mode_index = command.index("--reward-mode")
+    assert command[mode_index + 1] == "rf_shaped"
 
 
 def _args(**overrides):
@@ -97,6 +134,7 @@ def _args(**overrides):
         "overwrite": False,
         "no_progress_bar": True,
         "observation_mode": "base",
+        "reward_mode": "terminal",
     }
     defaults.update(overrides)
     return Namespace(**defaults)

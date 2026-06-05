@@ -4,7 +4,7 @@ from sb3_contrib.common.maskable.utils import get_action_masks
 
 from yutnori.agents import ProjectRFRuleBasedAgent
 from yutnori.core import ACTION_SIZE
-from yutnori.env import TACTICAL_OBSERVATION_SIZE
+from yutnori.env import REWARD_MODE_RF_SHAPED, TACTICAL_OBSERVATION_SIZE
 from yutnori.training import OPPONENT_NAMES, make_yutnori_env, make_yutnori_vec_env
 from yutnori.training.env_factory import make_opponent
 
@@ -98,6 +98,22 @@ def test_make_yutnori_env_supports_tactical_observation_mode():
         env.close()
 
 
+def test_make_yutnori_env_supports_reward_mode():
+    env = make_yutnori_env(
+        opponent="project_rf_rule",
+        seed=45,
+        reward_mode=REWARD_MODE_RF_SHAPED,
+    )
+
+    try:
+        _obs, info = env.reset(seed=46)
+
+        assert env.reward_mode == REWARD_MODE_RF_SHAPED
+        assert info["reward_mode"] == REWARD_MODE_RF_SHAPED
+    finally:
+        env.close()
+
+
 def test_make_yutnori_vec_env_supports_tactical_observation_mode():
     vec_env = make_yutnori_vec_env(
         opponent="project_rf_rule",
@@ -114,5 +130,24 @@ def test_make_yutnori_vec_env_supports_tactical_observation_mode():
         assert masks.dtype == np.bool_
         assert masks.shape == (2, ACTION_SIZE)
         assert masks.any(axis=1).all()
+    finally:
+        vec_env.close()
+
+
+def test_make_yutnori_vec_env_supports_reward_mode():
+    vec_env = make_yutnori_vec_env(
+        opponent="project_rf_rule",
+        n_envs=2,
+        seed=61,
+        reward_mode=REWARD_MODE_RF_SHAPED,
+    )
+
+    try:
+        vec_env.reset()
+
+        assert vec_env.get_attr("reward_mode") == [
+            REWARD_MODE_RF_SHAPED,
+            REWARD_MODE_RF_SHAPED,
+        ]
     finally:
         vec_env.close()

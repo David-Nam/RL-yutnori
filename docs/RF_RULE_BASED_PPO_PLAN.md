@@ -561,7 +561,7 @@ shaping_reward
 
 ### Step 12. PPO train/eval에 reward mode 연결
 
-상태: 예정
+상태: 완료
 
 구현:
 
@@ -572,6 +572,110 @@ shaping_reward
 
 - `terminal`, `rf_shaped` 각각 짧은 PPO smoke 학습 및 평가를 수행한다.
 - reward mode별 run artifact가 분리되고 평가 가능해야 한다.
+
+결과:
+
+- `make_yutnori_env()`와 `make_yutnori_vec_env()`에 `reward_mode` 인자를
+  추가했다.
+- `evaluate_maskable_policy()`에 `reward_mode` 인자를 추가해 평가 env도
+  같은 reward mode로 생성할 수 있게 했다.
+- `scripts/train_ppo.py`에 `--reward-mode terminal|rf_shaped` 옵션을
+  추가했다.
+- train vec env, 학습 전/후 평가, early stopping 평가가 모두 같은
+  reward mode를 사용하도록 연결했다.
+- `config.json`, `summary.json`, early stopping eval log에 `reward_mode`를
+  기록하도록 했다.
+- `resolve_model_reward_mode(model_path, requested_reward_mode)`를 추가했다.
+  - CLI에서 명시한 mode가 있으면 우선한다.
+  - 명시하지 않으면 `model.zip`과 같은 directory의 `config.json`에서
+    `reward_mode`를 읽는다.
+  - `config.json`이 없거나 오래된 config에 `reward_mode`가 없으면
+    backward compatibility를 위해 `terminal`을 사용한다.
+  - 알 수 없는 mode는 `ValueError`로 실패시킨다.
+- `scripts/evaluate_ppo.py`와 `scripts/evaluate_rf_target.py`에
+  `--reward-mode` 옵션을 추가했다.
+- 평가 결과 JSON에 `reward_mode`를 기록하도록 했다.
+- `scripts/run_ppo_long_sweep.py`도 reward mode를 train/eval command에
+  전달하도록 했다.
+- long sweep run name은 `base + terminal`에서는 기존 이름을 유지한다.
+  - `base + rf_shaped`: `_rf_shaped` suffix
+  - `tactical + terminal`: `_tactical` suffix
+  - `tactical + rf_shaped`: `_tactical_rf_shaped` suffix
+
+검증 결과:
+
+- 관련 테스트:
+
+```text
+.venv/bin/python -m pytest \
+  tests/test_model_config.py \
+  tests/test_training_env_factory.py \
+  tests/test_evaluate_rf_target.py \
+  tests/test_ppo_long_sweep.py -q
+
+39 passed
+```
+
+- `rf_shaped` PPO smoke 학습:
+
+```text
+.venv/bin/python scripts/train_ppo.py \
+  --total-timesteps 64 \
+  --n-steps 8 \
+  --batch-size 8 \
+  --n-envs 1 \
+  --opponent project_rf_rule \
+  --reward-mode rf_shaped \
+  --run-dir /tmp/ppo_rf_shaped_smoke \
+  --eval-episodes 0 \
+  --device cpu \
+  --overwrite \
+  --no-progress-bar
+```
+
+  - `trained_timesteps`: `64`
+  - `observation_mode`: `base`
+  - `reward_mode`: `rf_shaped`
+  - model 저장 위치: `/tmp/ppo_rf_shaped_smoke/model.zip`
+
+- 일반 evaluator smoke:
+
+```text
+.venv/bin/python scripts/evaluate_ppo.py \
+  --model-path /tmp/ppo_rf_shaped_smoke/model.zip \
+  --episodes 2 \
+  --opponent project_rf_rule \
+  --device cpu \
+  --output /tmp/ppo_rf_shaped_eval.json \
+  --no-progress-bar
+```
+
+  - `--reward-mode` 생략 상태에서 `config.json` 기반 `rf_shaped` mode
+    자동 추론 확인
+  - `illegal_action_count`: `0`
+
+- RF target evaluator smoke:
+
+```text
+.venv/bin/python scripts/evaluate_rf_target.py \
+  --model-path /tmp/ppo_rf_shaped_smoke/model.zip \
+  --episodes 2 \
+  --device cpu \
+  --output /tmp/ppo_rf_shaped_rf_eval.json \
+  --no-progress-bar
+```
+
+  - `--reward-mode` 생략 상태에서 `config.json` 기반 `rf_shaped` mode
+    자동 추론 확인
+  - `illegal_action_count`: `0`
+
+- 전체 regression:
+
+```text
+.venv/bin/python -m pytest -q
+
+127 passed
+```
 
 ### Step 13. 소규모 PPO sweep 실행
 

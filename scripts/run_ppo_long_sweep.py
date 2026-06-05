@@ -20,7 +20,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
-from yutnori.env import OBSERVATION_MODE_BASE, OBSERVATION_MODES  # noqa: E402
+from yutnori.env import (  # noqa: E402
+    OBSERVATION_MODE_BASE,
+    OBSERVATION_MODES,
+    REWARD_MODE_TERMINAL,
+    REWARD_MODES,
+)
 from yutnori.training.env_factory import OPPONENT_NAMES  # noqa: E402
 
 
@@ -34,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
     parser.add_argument("--observation-mode", choices=OBSERVATION_MODES, default="base")
+    parser.add_argument("--reward-mode", choices=REWARD_MODES, default="terminal")
     parser.add_argument("--total-timesteps", type=int, default=10_000_000)
     parser.add_argument("--timesteps-label", default=None)
     parser.add_argument("--n-envs", type=int, default=16)
@@ -72,6 +78,7 @@ def main() -> None:
                 timesteps_label,
                 args.n_envs,
                 args.observation_mode,
+                args.reward_mode,
             )
             run_dir = args.runs_root / run_name
             log_path = args.logs_root / f"{run_name}.log"
@@ -157,6 +164,8 @@ def _train_command(
         opponent,
         "--observation-mode",
         args.observation_mode,
+        "--reward-mode",
+        args.reward_mode,
         "--n-envs",
         str(args.n_envs),
         "--device",
@@ -204,6 +213,8 @@ def _eval_command(
         opponent,
         "--observation-mode",
         args.observation_mode,
+        "--reward-mode",
+        args.reward_mode,
         "--episodes",
         str(args.final_eval_episodes),
         "--seed",
@@ -333,12 +344,14 @@ def _run_name(
     timesteps_label: str,
     n_envs: int,
     observation_mode: str,
+    reward_mode: str,
 ) -> str:
-    mode_suffix = (
-        ""
-        if observation_mode == OBSERVATION_MODE_BASE
-        else f"_{observation_mode}"
-    )
+    suffixes = []
+    if observation_mode != OBSERVATION_MODE_BASE:
+        suffixes.append(observation_mode)
+    if reward_mode != REWARD_MODE_TERMINAL:
+        suffixes.append(reward_mode)
+    mode_suffix = "" if not suffixes else f"_{'_'.join(suffixes)}"
     return f"{opponent}_seed_{seed}_{timesteps_label}_nenv{n_envs}{mode_suffix}"
 
 

@@ -19,11 +19,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from sb3_contrib import MaskablePPO  # noqa: E402
 
-from yutnori.env import OBSERVATION_MODES  # noqa: E402
+from yutnori.env import OBSERVATION_MODES, REWARD_MODES  # noqa: E402
 from yutnori.training import (  # noqa: E402
     PolicyEvaluationResult,
     evaluate_maskable_policy,
     resolve_model_observation_mode,
+    resolve_model_reward_mode,
 )
 
 TARGET_OPPONENT = "project_rf_rule"
@@ -39,6 +40,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--observation-mode", choices=OBSERVATION_MODES, default=None)
+    parser.add_argument("--reward-mode", choices=REWARD_MODES, default=None)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--max-decisions", type=int, default=10_000)
     parser.add_argument("--pass-threshold", type=float, default=DEFAULT_PASS_THRESHOLD)
@@ -55,6 +57,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         args.model_path,
         args.observation_mode,
     )
+    reward_mode = resolve_model_reward_mode(
+        args.model_path,
+        args.reward_mode,
+    )
     model = MaskablePPO.load(args.model_path, device=args.device)
     result = evaluate_maskable_policy(
         model,
@@ -62,6 +68,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         episodes=args.episodes,
         seed=args.seed,
         observation_mode=observation_mode,
+        reward_mode=reward_mode,
         deterministic=not args.stochastic,
         max_decisions=args.max_decisions,
         show_progress=not args.no_progress_bar,
@@ -72,6 +79,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         model_path=args.model_path,
         deterministic=not args.stochastic,
         observation_mode=observation_mode,
+        reward_mode=reward_mode,
         pass_threshold=args.pass_threshold,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -85,6 +93,7 @@ def build_payload(
     model_path: Path,
     deterministic: bool,
     observation_mode: str,
+    reward_mode: str,
     pass_threshold: float = DEFAULT_PASS_THRESHOLD,
 ) -> dict[str, Any]:
     return {
@@ -92,6 +101,7 @@ def build_payload(
         "evaluated_at": datetime.now(UTC).isoformat(),
         "deterministic": deterministic,
         "observation_mode": observation_mode,
+        "reward_mode": reward_mode,
         "target_opponent": TARGET_OPPONENT,
         "official_episodes": result.episodes,
         "pass_threshold": pass_threshold,
