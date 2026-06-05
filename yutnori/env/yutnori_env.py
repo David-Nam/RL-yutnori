@@ -36,6 +36,9 @@ TACTICAL_OBSERVATION_SIZE = (
 OBSERVATION_MODE_BASE = "base"
 OBSERVATION_MODE_TACTICAL = "tactical"
 OBSERVATION_MODES = (OBSERVATION_MODE_BASE, OBSERVATION_MODE_TACTICAL)
+REWARD_MODE_TERMINAL = "terminal"
+REWARD_MODE_RF_SHAPED = "rf_shaped"
+REWARD_MODES = (REWARD_MODE_TERMINAL, REWARD_MODE_RF_SHAPED)
 
 OpponentPolicy = Callable[[GameState, list[int]], int]
 YutSamplerFactory = Callable[[random.Random], Sampler]
@@ -58,6 +61,7 @@ class YutnoriEnv(gym.Env[np.ndarray, int]):
         opponent_policy: OpponentPolicy | None = None,
         yut_sampler_factory: YutSamplerFactory | None = None,
         observation_mode: str = OBSERVATION_MODE_BASE,
+        reward_mode: str = REWARD_MODE_TERMINAL,
     ) -> None:
         if learner_player < 0 or learner_player >= PLAYER_COUNT:
             raise ValueError(f"learner_player must be in [0, {PLAYER_COUNT})")
@@ -69,12 +73,15 @@ class YutnoriEnv(gym.Env[np.ndarray, int]):
             raise ValueError(
                 f"observation_mode must be one of {', '.join(OBSERVATION_MODES)}"
             )
+        if reward_mode not in REWARD_MODES:
+            raise ValueError(f"reward_mode must be one of {', '.join(REWARD_MODES)}")
 
         self.learner_player = learner_player
         self._fixed_starting_player = starting_player
         self._opponent_policy = opponent_policy
         self._yut_sampler_factory = yut_sampler_factory
         self.observation_mode = observation_mode
+        self.reward_mode = reward_mode
         self._rng = random.Random()
         self.state: GameState | None = None
 
@@ -124,7 +131,11 @@ class YutnoriEnv(gym.Env[np.ndarray, int]):
         learner_event = state.apply_action(int(action))
         opponent_events = self._advance_opponent_turns()
         terminated = state.winner is not None
-        reward = self._reward()
+        terminal_reward, shaping_reward = self._reward_components(
+            learner_event,
+            opponent_events,
+        )
+        reward = terminal_reward + shaping_reward
         info = self._base_info()
         info.update(
             {
@@ -132,6 +143,8 @@ class YutnoriEnv(gym.Env[np.ndarray, int]):
                 "opponent_events": [
                     self._event_to_dict(event) for event in opponent_events
                 ],
+                "terminal_reward": terminal_reward,
+                "shaping_reward": shaping_reward,
             }
         )
         return self._get_obs(), reward, terminated, False, info
@@ -191,16 +204,45 @@ class YutnoriEnv(gym.Env[np.ndarray, int]):
             observation_mode=self.observation_mode,
         )
 
-    def _reward(self) -> float:
+    def _terminal_reward(self) -> float:
         state = self._require_state()
         if state.winner is None:
             return 0.0
         return 1.0 if state.winner == self.learner_player else -1.0
 
+    def _reward_components(
+        self,
+        learner_event: GameEvent,
+        opponent_events: list[GameEvent],
+    ) -> tuple[float, float]:
+        terminal_reward = self._terminal_reward()
+        if self.reward_mode == REWARD_MODE_TERMINAL:
+            return terminal_reward, 0.0
+        if self.reward_mode == REWARD_MODE_RF_SHAPED:
+            return terminal_reward, self._project_rf_shaping_reward(
+                learner_event,
+                opponent_events,
+            )
+        raise RuntimeError(f"unknown reward_mode: {self.reward_mode}")
+
+    def _project_rf_shaping_reward(
+        self,
+        learner_event: GameEvent,
+        opponent_events: list[GameEvent],
+    ) -> float:
+        from yutnori.training.reward_shaping import project_rf_events_shaping_reward
+
+        return project_rf_events_shaping_reward(
+            learner_event,
+            opponent_events,
+            learner_player=self.learner_player,
+        )
+
     def _base_info(self) -> dict[str, Any]:
         state = self._require_state()
         return {
             "learner_player": self.learner_player,
+            "reward_mode": self.reward_mode,
             "current_player": state.current_player,
             "winner": state.winner,
             "turn_count": state.turn_count,

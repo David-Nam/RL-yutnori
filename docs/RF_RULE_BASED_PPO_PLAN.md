@@ -495,7 +495,7 @@ RF_SHAPING_SHORTCUT_BONUS = 0.02
 
 ### Step 11. reward mode env 연결
 
-상태: 예정
+상태: 완료
 
 구현:
 
@@ -508,6 +508,56 @@ RF_SHAPING_SHORTCUT_BONUS = 0.02
 
 - 기존 terminal reward 테스트가 그대로 통과해야 한다.
 - shaped reward 전용 테스트를 추가한다.
+
+결과:
+
+- `YutnoriEnv`에 `reward_mode="terminal"|"rf_shaped"` 옵션을 추가했다.
+- 기본값은 `terminal`로 유지해 기존 env reward 동작을 보존했다.
+- 다음 public 상수를 추가했다.
+
+```text
+REWARD_MODE_TERMINAL
+REWARD_MODE_RF_SHAPED
+REWARD_MODES
+```
+
+- `terminal` mode에서는 기존처럼 승리 시 `+1.0`, 패배 시 `-1.0`,
+  비종료 상태에서는 `0.0`만 반환한다.
+- `rf_shaped` mode에서는 terminal reward에 Step 10의
+  `project_rf_events_shaping_reward()` 결과를 더한다.
+- learner event와 opponent events를 모두 shaping 계산에 반영한다.
+  - learner capture/finish/shortcut은 양수 shaping이다.
+  - opponent capture/finish는 음수 shaping이다.
+  - opponent shortcut은 패널티가 없다.
+- step info에 다음 reward breakdown을 기록한다.
+
+```text
+reward_mode
+terminal_reward
+shaping_reward
+```
+
+- 잘못된 reward mode는 env 생성 시 `ValueError`로 실패한다.
+
+검증 결과:
+
+- reward mode 관련 테스트:
+
+```text
+.venv/bin/python -m pytest \
+  tests/test_yutnori_env.py \
+  tests/test_reward_shaping.py -q
+
+28 passed
+```
+
+- 전체 regression:
+
+```text
+.venv/bin/python -m pytest -q
+
+115 passed
+```
 
 ### Step 12. PPO train/eval에 reward mode 연결
 

@@ -13,9 +13,16 @@ from yutnori.core import (
 from yutnori.env import (
     OBSERVATION_SIZE,
     POSITION_WAITING,
+    REWARD_MODE_RF_SHAPED,
+    REWARD_MODE_TERMINAL,
     TACTICAL_OBSERVATION_SIZE,
     YutnoriEnv,
     observation_size,
+)
+from yutnori.training import (
+    RF_SHAPING_CAPTURE_WEIGHT,
+    RF_SHAPING_FINISH_WEIGHT,
+    RF_SHAPING_SHORTCUT_BONUS,
 )
 from yutnori.agents.tactical_features import (
     TACTICAL_ACTION_FEATURE_NAMES,
@@ -132,6 +139,11 @@ def test_tactical_observation_legal_feature_matches_action_mask():
 def test_yutnori_env_rejects_unknown_observation_mode():
     with pytest.raises(ValueError, match="observation_mode"):
         YutnoriEnv(observation_mode="unknown")
+
+
+def test_yutnori_env_rejects_unknown_reward_mode():
+    with pytest.raises(ValueError, match="reward_mode"):
+        YutnoriEnv(reward_mode="unknown")
 
 
 def test_reset_seed_reproducibly_returns_same_initial_observation_and_mask():
@@ -256,6 +268,129 @@ def test_terminal_reward_when_learner_wins():
     assert not truncated
     assert info["winner"] == 0
     assert not env.action_masks().any()
+
+
+def test_terminal_reward_mode_ignores_non_terminal_shaping_events():
+    env = YutnoriEnv(
+        starting_player=0,
+        reward_mode=REWARD_MODE_TERMINAL,
+        yut_sampler_factory=sequence_factory([YutResult.DO, YutResult.DO]),
+    )
+    env.reset(seed=1)
+    assert env.state is not None
+    env.state.pieces[0][0] = Position.at(Route.OUTER, 1)
+    env.state.pieces[1][0] = Position.at(Route.OUTER, 3)
+    env.state.pieces[1][1] = Position.at(Route.OUTER, 3)
+    env.state.set_pool(YutResult.GAE)
+
+    _obs, reward, terminated, _truncated, info = env.step(
+        encode_action(0, YutResult.GAE)
+    )
+
+    assert reward == 0.0
+    assert not terminated
+    assert info["reward_mode"] == REWARD_MODE_TERMINAL
+    assert info["terminal_reward"] == 0.0
+    assert info["shaping_reward"] == 0.0
+    assert info["learner_event"]["captured_count"] == 2
+
+
+def test_rf_shaped_reward_adds_learner_capture_reward():
+    env = YutnoriEnv(
+        starting_player=0,
+        reward_mode=REWARD_MODE_RF_SHAPED,
+        yut_sampler_factory=sequence_factory([YutResult.DO, YutResult.DO]),
+    )
+    env.reset(seed=1)
+    assert env.state is not None
+    env.state.pieces[0][0] = Position.at(Route.OUTER, 1)
+    env.state.pieces[1][0] = Position.at(Route.OUTER, 3)
+    env.state.pieces[1][1] = Position.at(Route.OUTER, 3)
+    env.state.set_pool(YutResult.GAE)
+
+    _obs, reward, terminated, _truncated, info = env.step(
+        encode_action(0, YutResult.GAE)
+    )
+
+    expected = 2 * RF_SHAPING_CAPTURE_WEIGHT
+    assert reward == pytest.approx(expected)
+    assert not terminated
+    assert info["reward_mode"] == REWARD_MODE_RF_SHAPED
+    assert info["terminal_reward"] == 0.0
+    assert info["shaping_reward"] == pytest.approx(expected)
+
+
+def test_rf_shaped_reward_adds_learner_shortcut_reward():
+    env = YutnoriEnv(
+        starting_player=0,
+        reward_mode=REWARD_MODE_RF_SHAPED,
+        yut_sampler_factory=sequence_factory([YutResult.DO]),
+    )
+    env.reset(seed=1)
+    assert env.state is not None
+    env.state.pieces[0][0] = Position.at(Route.OUTER, 1)
+    env.state.set_pool(YutResult.YUT, YutResult.DO)
+
+    _obs, reward, terminated, _truncated, info = env.step(
+        encode_action(0, YutResult.YUT)
+    )
+
+    assert reward == pytest.approx(RF_SHAPING_SHORTCUT_BONUS)
+    assert not terminated
+    assert info["terminal_reward"] == 0.0
+    assert info["shaping_reward"] == pytest.approx(RF_SHAPING_SHORTCUT_BONUS)
+    assert info["learner_event"]["entered_shortcut"] is True
+
+
+def test_rf_shaped_reward_penalizes_opponent_capture_events():
+    env = YutnoriEnv(
+        starting_player=0,
+        reward_mode=REWARD_MODE_RF_SHAPED,
+        opponent_policy=first_legal_action,
+        yut_sampler_factory=sequence_factory(
+            [YutResult.DO, YutResult.GAE, YutResult.DO, YutResult.DO]
+        ),
+    )
+    env.reset(seed=1)
+    assert env.state is not None
+    env.state.pieces[0][0] = Position.at(Route.OUTER, 18)
+    env.state.pieces[0][1] = Position.at(Route.OUTER, 3)
+    env.state.pieces[1][0] = Position.at(Route.OUTER, 1)
+    env.state.set_pool(YutResult.DO)
+
+    _obs, reward, terminated, _truncated, info = env.step(
+        encode_action(0, YutResult.DO)
+    )
+
+    assert not terminated
+    assert len(info["opponent_events"]) == 2
+    assert info["opponent_events"][0]["captured_count"] == 1
+    assert reward == pytest.approx(-RF_SHAPING_CAPTURE_WEIGHT)
+    assert info["terminal_reward"] == 0.0
+    assert info["shaping_reward"] == pytest.approx(-RF_SHAPING_CAPTURE_WEIGHT)
+
+
+def test_rf_shaped_reward_combines_terminal_and_shaping_rewards():
+    env = YutnoriEnv(
+        starting_player=0,
+        reward_mode=REWARD_MODE_RF_SHAPED,
+        yut_sampler_factory=sequence_factory([YutResult.GAE]),
+    )
+    env.reset(seed=1)
+    assert env.state is not None
+    for piece_id in range(3):
+        env.state.pieces[0][piece_id] = Position.finished()
+    env.state.pieces[0][3] = Position.at(Route.OUTER, 19)
+    env.state.set_pool(YutResult.GAE)
+
+    _obs, reward, terminated, _truncated, info = env.step(
+        encode_action(3, YutResult.GAE)
+    )
+
+    assert terminated
+    assert reward == pytest.approx(1.0 + RF_SHAPING_FINISH_WEIGHT)
+    assert info["terminal_reward"] == 1.0
+    assert info["shaping_reward"] == pytest.approx(RF_SHAPING_FINISH_WEIGHT)
 
 
 def test_gymnasium_spaces_accept_reset_outputs():
