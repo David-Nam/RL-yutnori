@@ -854,7 +854,7 @@ RF target 1000판 평가 결과:
 
 ### Step 14. 장기 PPO 후보 학습 및 공식 검증
 
-상태: 예정
+상태: 1차 장기 학습 완료
 
 구현:
 
@@ -881,6 +881,192 @@ RF target 1000판 평가 결과:
 - `tactical + rf_shaped`가 장기에서도 RF target을 역전하지 못하면 현재
   `rf_shaped` reward는 우선 후보에서 제외하고, 필요 시 capture-risk 기반
   reward/feature로 재설계한다.
+
+실행 스크립트:
+
+- `scripts/run_step14_long_training.sh`를 추가한다.
+- 기본 실행은 1순위 후보인 `tactical + terminal`만 학습/평가한다.
+- 학습은 `run_ppo_long_sweep.py`를 사용하되 final eval은 생략하고,
+  학습 완료 후 `evaluate_rf_target.py`로 공식 RF target 5000판 평가를
+  각 seed별로 실행한다.
+- 공식 평가 결과는 각 run directory에 아래 이름으로 저장된다.
+
+```text
+eval_project_rf_rule_official_5000.json
+```
+
+- 기본 설정은 다음과 같다.
+
+```text
+profile: primary
+opponent: project_rf_rule
+observation: tactical
+reward: terminal
+seeds: 0 1 2
+total_timesteps: 10000000
+timesteps_label: 10m
+n_envs: 16
+device: cuda
+train_eval_episodes: 100
+official_eval_episodes: 5000
+pass_threshold: 0.60
+checkpoint_freq: 1000000
+runs_root: runs/ppo_step14_long_training_v2
+logs_root: logs/ppo_step14_long_training_v2
+```
+
+- 사용자는 먼저 dry-run으로 실행될 명령을 확인한다.
+
+```bash
+cd /home/david-nam/work-space/RL-yutnori
+scripts/run_step14_long_training.sh --dry-run
+```
+
+- 문제가 없으면 실제 1차 장기 학습을 실행한다.
+
+```bash
+scripts/run_step14_long_training.sh
+```
+
+- 특정 GPU를 지정하려면 다음처럼 실행한다.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 scripts/run_step14_long_training.sh
+```
+
+- 2순위 후보인 `tactical + rf_shaped` 비교가 필요하면 다음처럼 실행한다.
+
+```bash
+PROFILE=comparison scripts/run_step14_long_training.sh
+```
+
+- 두 후보를 연속으로 모두 실행하려면 다음처럼 실행한다.
+
+```bash
+PROFILE=both scripts/run_step14_long_training.sh
+```
+
+- 20M 학습은 현재 resume 방식이 아니라 동일 조건의 fresh run으로 실행한다.
+
+```bash
+TOTAL_TIMESTEPS=20000000 \
+TIMESTEPS_LABEL=20m \
+scripts/run_step14_long_training.sh
+```
+
+- 기존 run directory가 있으면 기본적으로 재사용/skip한다.
+  의도적으로 다시 실행할 때만 `--overwrite`를 추가한다.
+- 공식 평가 JSON만 다시 만들고 싶으면 `OVERWRITE_EVAL=1`을 지정한다.
+
+실행 준비 검증:
+
+- 스크립트 문법 검사:
+
+```text
+bash -n scripts/run_step14_long_training.sh
+
+passed
+```
+
+- `/tmp` 출력 경로로 기본 primary dry-run을 실행해 아래 명령 생성 확인:
+  - `tactical + terminal` 10M 학습 3개 seed
+  - `evaluate_rf_target.py` 공식 RF 5000판 평가 3개 seed
+
+```text
+RUNS_ROOT=/tmp/ppo_step14_long_training_dry_runs \
+LOGS_ROOT=/tmp/ppo_step14_long_training_dry_logs \
+scripts/run_step14_long_training.sh --dry-run
+
+passed
+```
+
+- comparison dry-run으로 `tactical + rf_shaped` 경로와 run name도 확인했다.
+
+실행 중 발견한 이슈와 수정:
+
+- 최초 Step 14 실행은 아래 오류로 seed 0 학습 중단:
+
+```text
+RuntimeError: step called while learner is not the current player
+```
+
+- 원인:
+  - single-learner env는 `reset()`에서 opponent 선공이면 opponent 턴을
+    내부에서 자동 진행한 뒤 learner decision state를 반환한다.
+  - 아주 긴 보너스 윷/모 연속이 reset 중 발생하면 opponent가 learner의
+    첫 decision 전에 게임을 끝낼 수 있다.
+  - 기존 구현은 이 terminal-before-learner-decision 상태를 그대로 반환할 수
+    있었고, 다음 PPO step에서 learner 턴이 아니라는 RuntimeError가 발생했다.
+- 수정:
+  - `YutnoriEnv.reset()`이 opponent 자동 진행 중 terminal이 된 opening을
+    버리고 새 게임을 재샘플링하도록 수정한다.
+  - 성공한 reset info에 `skipped_terminal_resets`를 기록한다.
+  - deterministic regression test를 추가해 opponent opening terminal을
+    재현하고, reset이 learner decision state를 반환하는지 확인한다.
+- 실패한 최초 실행 artifact가 `runs/ppo_step14_long_training`에 남아 있으므로,
+  기본 Step 14 출력 경로는 충돌을 피하기 위해 `*_v2`로 변경한다.
+  사용자는 수정 후 다시 아래 명령만 실행하면 된다.
+
+```bash
+scripts/run_step14_long_training.sh
+```
+
+1차 장기 학습 결과:
+
+- 실행 경로: `runs/ppo_step14_long_training_v2`
+- log 경로: `logs/ppo_step14_long_training_v2`
+- 학습 설정:
+  - observation: `tactical`
+  - reward: `terminal`
+  - opponent: `project_rf_rule`
+  - seeds: `0, 1, 2`
+  - timesteps: `10M`
+  - n_envs: `16`
+  - device: `cuda`
+  - GPU: `NVIDIA A100-SXM4-40GB`
+  - official eval: `project_rf_rule` 상대 `5000`판
+- artifact 검증:
+  - 3개 run 모두 `model.zip`, `summary.json`, `config.json` 생성 확인
+  - 각 run마다 checkpoint 10개 생성 확인
+  - 각 run마다 `eval_project_rf_rule_official_5000.json` 생성 확인
+
+공식 RF target 5000판 평가 결과:
+
+| seed | wins | losses | win_rate | passed | illegal | starting player |
+| ---: | ---: | ---: | ---: | :---: | ---: | --- |
+| 0 | 2846 | 2154 | 0.5692 | false | 0 | 2509 / 2491 |
+| 1 | 2919 | 2081 | 0.5838 | false | 0 | 2509 / 2491 |
+| 2 | 2928 | 2072 | 0.5856 | false | 0 | 2510 / 2490 |
+
+집계:
+
+```text
+mean: 0.5795
+min: 0.5692
+max: 0.5856
+population stdev: 0.0073
+total official games: 15000
+illegal_action_count sum: 0
+all passed: false
+```
+
+해석:
+
+- 3M sweep의 `tactical + terminal` 평균 `0.533`에서 10M 공식 평가 평균
+  `0.5795`까지 상승했다.
+- seed 1, 2는 `58%` 중반까지 올라왔고, seed 간 편차도 작다.
+- 하지만 모든 seed가 공식 pass threshold `0.60`에는 도달하지 못했다.
+- 현재 결과는 Step 14의 사전 판단 기준 중 `58~60% 근처`에 해당하므로,
+  pure PPO를 바로 포기하기보다 `20M` 확장을 먼저 시도할 근거가 있다.
+- 단, 현재 학습 스크립트는 resume을 지원하지 않으므로 20M은 fresh run이다.
+  10M checkpoint에서 이어 학습하려면 별도 resume 기능 구현이 필요하다.
+
+결론:
+
+- 현재 pure PPO 최고 후보는 계속 `tactical + terminal`이다.
+- 10M 기준 목표 60%는 미달이다.
+- 다음 개발/실험 우선순위는 `tactical + terminal` 20M 확장이다.
+- 20M에서도 60%를 넘지 못하면 Step 15 hybrid policy 구현으로 넘어간다.
 
 검증:
 

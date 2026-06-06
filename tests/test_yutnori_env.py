@@ -1,6 +1,11 @@
 import numpy as np
 import pytest
 
+from yutnori.agents import ProjectRFRuleBasedAgent
+from yutnori.agents.tactical_features import (
+    TACTICAL_ACTION_FEATURE_NAMES,
+    TACTICAL_ACTION_FEATURE_SIZE,
+)
 from yutnori.core import (
     ACTION_SIZE,
     Cell,
@@ -23,10 +28,6 @@ from yutnori.training import (
     RF_SHAPING_CAPTURE_WEIGHT,
     RF_SHAPING_FINISH_WEIGHT,
     RF_SHAPING_SHORTCUT_BONUS,
-)
-from yutnori.agents.tactical_features import (
-    TACTICAL_ACTION_FEATURE_NAMES,
-    TACTICAL_ACTION_FEATURE_SIZE,
 )
 
 FEATURE_INDEX = {
@@ -54,6 +55,17 @@ def first_legal_action(_state: GameState, legal_actions: list[int]) -> int:
 def sequence_factory(results):
     def factory(_rng):
         return SequenceSampler(results)
+
+    return factory
+
+
+def sequence_attempt_factory(attempts):
+    attempts = [list(results) for results in attempts]
+
+    def factory(_rng):
+        if not attempts:
+            raise AssertionError("sequence_attempt_factory exhausted")
+        return SequenceSampler(attempts.pop(0))
 
     return factory
 
@@ -227,6 +239,32 @@ def test_reset_auto_advances_opponent_until_learner_turn():
 
     assert len(info["opponent_events"]) == 1
     assert info["opponent_events"][0]["actor"] == 1
+    assert info["current_player"] == 0
+    assert np.flatnonzero(env.action_masks()).tolist() == [
+        encode_action(0, YutResult.GEOL),
+        encode_action(1, YutResult.GEOL),
+        encode_action(2, YutResult.GEOL),
+        encode_action(3, YutResult.GEOL),
+    ]
+
+
+def test_reset_resamples_terminal_opponent_opening_before_learner_turn():
+    env = YutnoriEnv(
+        starting_player=1,
+        opponent_policy=ProjectRFRuleBasedAgent().select_action,
+        yut_sampler_factory=sequence_attempt_factory(
+            [
+                [YutResult.MO] * 10 + [YutResult.DO],
+                [YutResult.DO, YutResult.GEOL],
+            ]
+        ),
+    )
+
+    _obs, info = env.reset(seed=9)
+
+    assert env.state is not None
+    assert env.state.winner is None
+    assert info["skipped_terminal_resets"] == 1
     assert info["current_player"] == 0
     assert np.flatnonzero(env.action_masks()).tolist() == [
         encode_action(0, YutResult.GEOL),

@@ -39,6 +39,7 @@ OBSERVATION_MODES = (OBSERVATION_MODE_BASE, OBSERVATION_MODE_TACTICAL)
 REWARD_MODE_TERMINAL = "terminal"
 REWARD_MODE_RF_SHAPED = "rf_shaped"
 REWARD_MODES = (REWARD_MODE_TERMINAL, REWARD_MODE_RF_SHAPED)
+MAX_RESET_ATTEMPTS = 1_000
 
 OpponentPolicy = Callable[[GameState, list[int]], int]
 YutSamplerFactory = Callable[[random.Random], Sampler]
@@ -102,14 +103,23 @@ class YutnoriEnv(gym.Env[np.ndarray, int]):
         super().reset(seed=seed)
         self._rng = random.Random(seed)
 
-        starting_player = self._resolve_starting_player(options)
-        sampler = self._create_yut_sampler()
-        self.state = GameState(
-            starting_player=starting_player,
-            yut_sampler=sampler,
-        )
-        initial_rolls = self.state.start_turn()
-        opponent_events = self._advance_opponent_turns()
+        skipped_terminal_resets = 0
+        for _attempt in range(MAX_RESET_ATTEMPTS):
+            starting_player = self._resolve_starting_player(options)
+            sampler = self._create_yut_sampler()
+            self.state = GameState(
+                starting_player=starting_player,
+                yut_sampler=sampler,
+            )
+            initial_rolls = self.state.start_turn()
+            opponent_events = self._advance_opponent_turns()
+            if self.state.winner is None:
+                break
+            skipped_terminal_resets += 1
+        else:
+            raise RuntimeError(
+                "reset could not produce a learner decision state before terminal"
+            )
 
         info = self._base_info()
         info.update(
@@ -117,6 +127,7 @@ class YutnoriEnv(gym.Env[np.ndarray, int]):
                 "starting_player": starting_player,
                 "initial_rolls": [result.value for result in initial_rolls],
                 "opponent_events": [self._event_to_dict(event) for event in opponent_events],
+                "skipped_terminal_resets": skipped_terminal_resets,
             }
         )
         return self._get_obs(), info
