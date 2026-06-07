@@ -104,35 +104,52 @@ illegal actions: 0
 57.95%로 상승했고 seed 간 편차도 작았습니다. 따라서 현재 pure PPO
 최고 후보는 계속 `tactical + terminal`입니다.
 
+### 30M Parallel Training
+
+같은 PPO 후보를 seed별 30M timesteps로 fresh training했습니다. 12개 CPU
+core를 활용하도록 `SubprocVecEnv`와 `n_envs=12`를 사용했고, 학습은 A100
+GPU에서 수행했습니다.
+
+| Seed | Wins | Losses | Win Rate | Passed | Illegal Actions |
+| ---: | ---: | ---: | ---: | :---: | ---: |
+| 0 | 3000 | 2000 | **60.00%** | true | 0 |
+| 1 | 2944 | 2056 | 58.88% | false | 0 |
+| 2 | 2983 | 2017 | 59.66% | false | 0 |
+
+```text
+평균 승률: 59.51%
+평가 게임: 총 15,000판
+seed 표준편차: 0.47%p
+10M 대비 개선: +1.56%p
+60% 통과: 3개 seed 중 1개
+illegal actions: 0
+```
+
+30M 확장은 평균 성능과 seed 안정성을 개선했고, seed 0은 공식 기준을
+정확히 통과했습니다. 따라서 최소 목표를 만족하는 pure PPO 후보는
+확보했습니다. 다만 전체 seed 평균은 60%에 0.49%p 부족하고 seed 1, 2는
+기준 미달이므로, 안정적인 최종 후보가 확정됐다고 보지는 않습니다.
+
 자세한 분석은 [팀 회의 보고서](docs/RF_PPO_TEAM_MEETING_REPORT.md)와
 [개발 계획 및 진행 기록](docs/RF_RULE_BASED_PPO_PLAN.md)에서 확인할 수
 있습니다.
 
 ## Current Status
 
-다음 실험은 동일한 PPO 후보를 seed별 30M timesteps로 처음부터 다시
-학습하는 것입니다.
-
-기존 10M 학습은 `DummyVecEnv`를 사용해 여러 환경을 한 process에서
-순차 실행했습니다. 30M 실행은 12 CPU core를 활용하기 위해 다음 구성을
-사용합니다.
+30M 최종 모델 평가까지 완료했습니다. 현재 pure PPO 최고 단일 결과는
+seed 0의 `60.00%`이고, 3개 seed 평균은 `59.51%`입니다.
 
 ```text
-model: MaskablePPO
-observation: tactical
-reward: terminal
-opponent: project_rf_rule
-seeds: 0, 1, 2
-timesteps: seed별 30M
-n_envs: 12
-vector env: SubprocVecEnv
-device: CUDA
-checkpoint: 3M timesteps마다
-final evaluation: seed별 5000판
+현재 판단: 공식 60% 달성 후보 확보, 안정적인 최종 후보는 미확정
+다음 검증: 21M, 24M, 27M, 30M checkpoint 비교
+후속 후보: checkpoint 검증 후에도 미달이면 hybrid policy
 ```
 
-30M에서도 60%를 넘지 못하면 PPO action을 기본으로 사용하면서 명확한
-완주와 잡기 상황만 override하는 hybrid policy를 검토할 예정입니다.
+학습 후반의 최종 checkpoint가 항상 최고라는 보장은 없습니다. 먼저 저장된
+후반 checkpoint를 별도 selection seed로 선별하고, 선택된 모델만 공식
+5000판으로 재검증합니다. 여기서도 안정적인 60%를 확보하지 못하면 PPO
+action을 기본으로 사용하면서 명확한 완주와 잡기 상황만 override하는
+hybrid policy로 넘어갈 예정입니다.
 
 ## Setup
 
@@ -156,7 +173,7 @@ CUDA GPU 사용을 권장합니다.
 .venv/bin/python -m pytest -q
 ```
 
-현재 30M 병렬 학습 준비 기준으로 규칙 엔진, tactical feature, reward,
+현재 30M 병렬 학습 실행 기준으로 규칙 엔진, tactical feature, reward,
 action mask, subprocess vector environment를 포함한 전체 테스트가
 통과합니다.
 
@@ -177,7 +194,7 @@ action mask, subprocess vector environment를 포함한 전체 테스트가
   --run-dir runs/ppo_quickstart
 ```
 
-### 30M Experiment
+### Reproduce the 30M Experiment
 
 실행될 명령을 먼저 확인합니다.
 

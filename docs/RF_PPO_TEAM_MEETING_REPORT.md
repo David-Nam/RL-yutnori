@@ -1,6 +1,7 @@
 # RF Rule-based Agent 대응 PPO 실험 보고
 
 작성일: 2026-06-06
+최종 업데이트: 2026-06-07
 
 ## 1. 목표
 
@@ -343,9 +344,121 @@ finish/capture 실수를 줄이는 목적이다.
 
 - 3M 후보 선별에서는 `tactical + terminal`이 가장 좋았다.
 - 10M 장기 학습 결과 RF Agent 상대 공식 5000판 평균 승률은 `57.95%`였다.
-- 목표 `60%`에는 아직 미달했지만, 3M 평균 `53.3%`에서 의미 있게 상승했다.
-- seed 편차가 작아 결과는 안정적이다.
+- 30M 확장 결과 평균은 `59.51%`이고 seed 0은 `60.00%`로 통과했다.
+- 모든 seed가 10M보다 좋아졌지만, 3개 중 1개만 통과해 안정적 달성은 아니다.
 - illegal action은 모든 공식 평가에서 `0`이었다.
-- 현재는 pure PPO 가능성을 한 번 더 확인할 가치가 있으므로 30M 확장을
-  먼저 시도하는 것이 합리적이다.
-- 30M에서도 60%를 넘지 못하면 hybrid policy 구현으로 넘어간다.
+- 후반 checkpoint를 선별 평가한 뒤 pure PPO의 최종 가능성을 판단한다.
+- checkpoint에서도 안정적인 60% 후보가 없으면 hybrid policy로 넘어간다.
+
+## 11. 30M 확장 학습
+
+10M 결과가 목표 바로 아래까지 올라왔기 때문에 같은
+`tactical + terminal` 후보를 seed별 30M timesteps로 fresh training했다.
+
+```text
+observation: tactical
+reward: terminal
+opponent: project_rf_rule
+seeds: 0, 1, 2
+timesteps: 30M
+n_envs: 12
+vector env: SubprocVecEnv
+device: cuda
+GPU: NVIDIA A100-SXM4-40GB
+checkpoint: 3M 간격
+official eval: seed별 5000판
+```
+
+12개 CPU core를 실제 환경 실행에 활용하도록 각 환경을 별도 process로
+분리했다. 각 process의 BLAS/OpenMP thread는 1개로 제한했다.
+
+각 seed의 실제 trained timesteps는 `30,007,296`이고, 약 114만 episode를
+완료했다. 학습 시간은 seed당 약 2시간 59분에서 3시간 1분이었다.
+
+## 12. 30M 공식 평가 결과
+
+| seed | wins | losses | win_rate | passed | illegal | starting player |
+| ---: | ---: | ---: | ---: | :---: | ---: | --- |
+| 0 | 3000 | 2000 | 0.6000 | true | 0 | 2509 / 2491 |
+| 1 | 2944 | 2056 | 0.5888 | false | 0 | 2509 / 2491 |
+| 2 | 2983 | 2017 | 0.5966 | false | 0 | 2510 / 2490 |
+
+```text
+mean/pooled win rate: 0.5951
+min / max: 0.5888 / 0.6000
+population stdev: 0.0047
+total wins / games: 8927 / 15000
+passed seeds: 1 / 3
+illegal actions: 0
+```
+
+10M과 비교하면 다음과 같다.
+
+| seed | 10M | 30M | 변화 |
+| ---: | ---: | ---: | ---: |
+| 0 | 0.5692 | 0.6000 | +0.0308 |
+| 1 | 0.5838 | 0.5888 | +0.0050 |
+| 2 | 0.5856 | 0.5966 | +0.0110 |
+| mean | 0.5795 | 0.5951 | +0.0156 |
+
+모든 seed가 개선됐고 seed 간 표준편차도 `0.73%p`에서 `0.47%p`로 줄었다.
+따라서 30M 확장은 평균 성능뿐 아니라 seed 안정성도 개선했다.
+
+## 13. 통계 및 학습 추세 해석
+
+30M pooled 15000판의 Wilson 95% confidence interval은 약
+`58.73%~60.30%`다. seed 0의 5000판 관측 승률은 기준과 정확히 같은
+`60.00%`이지만, 해당 95% 구간은 약 `58.63%~61.35%`다.
+
+평가 harness의 판정 규칙에서는 seed 0이 통과한 것이 맞다. 다만 통계적으로
+“일반적인 실제 승률이 안정적으로 60%보다 높다”고 말하기에는 경계에 있다.
+전체 평균도 기준보다 `0.49%p` 낮다.
+
+학습 episode를 3M 구간으로 나누면 세 seed 모두 약 `44%`에서 시작해 마지막
+구간에는 `57.4~58.2%`까지 상승했다. 후반에도 상승은 이어졌지만 개선 폭은
+둔화됐다. 특히 seed 0은 24~27M 구간 승률이 27~30M보다 소폭 높았다.
+
+이 사실은 30M 최종 checkpoint가 반드시 각 seed의 최적 정책은 아니라는
+가능성을 보여준다. PPO는 학습이 진행될수록 단조롭게 좋아지는 알고리즘이
+아니므로, 이미 저장한 21M, 24M, 27M checkpoint를 비교할 가치가 있다.
+
+## 14. CPU 병렬화 효과
+
+학습 처리량은 다음과 같이 바뀌었다.
+
+```text
+10M DummyVecEnv 평균: 약 1,963 timesteps/s
+30M SubprocVecEnv 평균: 약 2,784 timesteps/s
+처리량 증가: 약 41.8%
+```
+
+10M 상당 시간으로 환산하면 약 85.2분에서 59.9분으로 줄어든다. A100을
+유지하면서 CPU 환경 simulation을 병렬화한 효과가 확인됐다.
+
+다만 10M은 `n_envs=16 + DummyVecEnv`, 30M은
+`n_envs=12 + SubprocVecEnv`다. rollout batch 크기도 달라졌으므로
+30M의 성능 향상을 timesteps 증가 하나로만 해석할 수는 없다.
+
+## 15. 현재 결론과 다음 판단
+
+이번 결과의 결론은 다음과 같다.
+
+```text
+Pure PPO 최고 단일 결과: 60.00% (seed 0)
+Pure PPO 3-seed 평균: 59.51%
+목표 통과 seed: 1 / 3
+판단: 최소 목표 달성 후보는 확보, 안정적인 최종 후보는 미확정
+```
+
+즉, 개별 모델 5000판 승률을 기준으로 하는 프로젝트의 최소 목표는 seed 0
+모델이 달성했다. 다만 통과 여유가 정확히 0승이고 다른 두 training seed는
+미달이므로, hybrid policy로 바로 넘어가기 전에 다음 순서로 pure PPO를
+한 번 더 검증한다.
+
+1. seed별 21M, 24M, 27M, 30M checkpoint를 별도 evaluation seed로 선별한다.
+2. seed별 상위 checkpoint를 공식 조건 5000판으로 재검증한다.
+3. 안정적인 60% 후보가 없으면 `finish > capture > PPO` hybrid를 구현한다.
+
+이 순서는 추가 학습 없이 이미 생성한 checkpoint를 활용한다. 학습 후반의
+정책 변동 때문에 놓쳤을 수 있는 최적 모델을 먼저 찾은 뒤, 그래도 부족할
+때만 정책 구조를 변경한다는 점에서 실험 흐름도 명확하다.

@@ -855,7 +855,7 @@ RF target 1000판 평가 결과:
 
 ### Step 14. 장기 PPO 후보 학습 및 공식 검증
 
-상태: 30M 확장 실행 준비 완료
+상태: 30M 확장 실행 및 최종 모델 평가 완료, 후반 checkpoint 선별 예정
 
 구현:
 
@@ -1136,6 +1136,133 @@ htop
 - 30M script dry-run에서 seed 3개 학습과 공식 5000판 평가 command 생성 확인
 - 전체 regression: `131 passed`
 
+30M 실행 결과:
+
+- 실행 경로: `runs/ppo_step14_30m_subproc`
+- log 경로: `logs/ppo_step14_30m_subproc`
+- 학습 설정:
+  - observation: `tactical`
+  - reward: `terminal`
+  - opponent: `project_rf_rule`
+  - seeds: `0, 1, 2`
+  - timesteps: `30M`
+  - n_envs: `12`
+  - vec_env: `subproc`
+  - device: `cuda`
+  - GPU: `NVIDIA A100-SXM4-40GB`
+  - official eval: `project_rf_rule` 상대 seed별 `5000`판
+- artifact 검증:
+  - 3개 run 모두 `model.zip`, `summary.json`, `config.json` 생성 확인
+  - 각 run마다 3M 간격 checkpoint 10개 생성 확인
+  - 각 run마다 `eval_project_rf_rule_official_5000.json` 생성 확인
+  - trained timesteps는 각 seed `30,007,296`
+
+공식 RF target 5000판 평가:
+
+| seed | wins | losses | win_rate | passed | illegal | starting player |
+| ---: | ---: | ---: | ---: | :---: | ---: | --- |
+| 0 | 3000 | 2000 | 0.6000 | true | 0 | 2509 / 2491 |
+| 1 | 2944 | 2056 | 0.5888 | false | 0 | 2509 / 2491 |
+| 2 | 2983 | 2017 | 0.5966 | false | 0 | 2510 / 2490 |
+
+집계:
+
+```text
+mean/pooled win rate: 0.5951
+min: 0.5888
+max: 0.6000
+population stdev: 0.0047
+total wins / games: 8927 / 15000
+illegal_action_count sum: 0
+passed seeds: 1 / 3
+```
+
+10M 대비:
+
+```text
+10M mean: 0.5795
+30M mean: 0.5951
+absolute improvement: +0.0156
+seed 0: 0.5692 -> 0.6000 (+0.0308)
+seed 1: 0.5838 -> 0.5888 (+0.0050)
+seed 2: 0.5856 -> 0.5966 (+0.0110)
+```
+
+- 모든 seed가 10M 결과보다 좋아져 학습량 확장의 방향성은 유효했다.
+- 30M pooled Wilson 95% confidence interval은 약 `0.5873~0.6030`이다.
+- seed 0의 5000판 관측 승률은 pass 기준과 정확히 같은 `0.6000`이며,
+  개별 95% 구간은 약 `0.5863~0.6135`다.
+- 따라서 harness의 관측 기준으로 seed 0은 통과했지만, 모집단 승률이
+  안정적으로 60%를 넘는다고 강하게 주장할 근거는 아직 부족하다.
+- 3개 seed 평균은 목표보다 `0.0049`, 즉 `0.49%p` 낮다.
+
+학습 중 3M 구간별 episode 승률:
+
+| timestep 구간 | seed 0 | seed 1 | seed 2 | mean |
+| --- | ---: | ---: | ---: | ---: |
+| 0~3M | 0.4446 | 0.4399 | 0.4378 | 0.4408 |
+| 3~6M | 0.5311 | 0.5175 | 0.5276 | 0.5254 |
+| 6~9M | 0.5478 | 0.5365 | 0.5465 | 0.5436 |
+| 9~12M | 0.5555 | 0.5451 | 0.5551 | 0.5519 |
+| 12~15M | 0.5637 | 0.5530 | 0.5597 | 0.5588 |
+| 15~18M | 0.5687 | 0.5551 | 0.5640 | 0.5626 |
+| 18~21M | 0.5797 | 0.5611 | 0.5711 | 0.5706 |
+| 21~24M | 0.5777 | 0.5664 | 0.5717 | 0.5719 |
+| 24~27M | 0.5845 | 0.5705 | 0.5750 | 0.5767 |
+| 27~30M | 0.5817 | 0.5738 | 0.5799 | 0.5785 |
+
+- 학습 episode 승률은 세 seed 모두 후반까지 상승했다.
+- seed 0은 24~27M에서 가장 높고 27~30M에서 소폭 하락했다.
+- seed 1, 2는 마지막 구간까지 상승했지만 후반 개선 폭은 작아졌다.
+- rollout 중 승률은 계속 변하는 stochastic training policy의 누적 결과이므로,
+  deterministic 공식 평가 승률과 직접 같지는 않다. checkpoint 선별의
+  보조 근거로만 사용한다.
+
+CPU 병렬화 결과:
+
+| run | 평균 처리량 | seed별 학습 시간 |
+| --- | ---: | --- |
+| 10M, `n_envs=16`, dummy | 약 1,963 ts/s | 81.8~87.5분 |
+| 30M, `n_envs=12`, subproc | 약 2,784 ts/s | 178.5~181.0분 |
+
+- 처리량은 약 `41.8%` 증가했다.
+- 10M 상당 학습 시간으로 환산하면 약 85.2분에서 59.9분으로 줄어든다.
+- 다만 10M과 30M은 vector env와 rollout 크기도 다르므로, 성능 차이를
+  timesteps 하나의 효과로만 해석하지 않는다.
+
+재현성 주의:
+
+- seed 0 config의 `git_commit`은 `a59f8f5`, seed 1과 2는 `76f7709`로
+  기록됐다.
+- 병렬 학습 변경이 working tree에 있는 상태에서 seed 0이 시작됐고,
+  순차 실행 중 commit이 생성되어 HEAD metadata가 달라진 것이다.
+- 세 run의 저장된 command와 학습 설정은 동일하지만, 앞으로 장기 실행
+  중에는 commit을 만들지 않아 config의 commit metadata를 통일한다.
+- 공식 평가 script의 기본 evaluation seed는 `100000`이지만 현재 결과
+  JSON에는 seed가 저장되지 않는다. 다음 checkpoint 평가 작업에서
+  evaluation seed도 artifact에 기록하도록 보완한다.
+
+30M 결론:
+
+- pure PPO는 10M 대비 확실히 개선됐고 단일 seed는 목표를 통과했다.
+- 최종 평가 규칙을 개별 모델의 5000판 관측 승률로 적용하면 seed 0은
+  `3000/5000`으로 최소 목표를 달성한 pure PPO 후보다.
+- 그러나 3개 seed 중 1개만 통과했고 평균은 `59.51%`이므로 Step 14를
+  안정적인 최종 후보 확정으로 종료하지 않는다.
+- 현재 결과는 사전 기준의 `58~60%` 구간에 해당한다. Step 15로 즉시
+  넘어가기 전에 저장된 후반 checkpoint를 비교한다.
+
+다음 commit 단위 작업:
+
+- 21M, 24M, 27M, 30M checkpoint를 일괄 평가하는 script를 추가한다.
+- selection 평가는 공식 평가와 다른 evaluation seed로 각 checkpoint를
+  1000판 평가한다.
+- seed별 상위 checkpoint만 기본 seed `100000`의 공식 5000판으로
+  재검증한다.
+- 결과 JSON에 evaluation seed를 기록하고, 평가 집계 summary를 생성한다.
+- checkpoint 재검증에서도 안정적인 60% 후보를 찾지 못하면 Step 15
+  hybrid evaluation policy 구현으로 넘어간다.
+
 검증:
 
 - `illegal_action_count == 0`이어야 한다.
@@ -1144,7 +1271,7 @@ htop
 
 ### Step 15. hybrid evaluation policy 구현
 
-상태: 예정
+상태: Step 14 후반 checkpoint 선별 결과까지 보류
 
 구현:
 
