@@ -3,6 +3,7 @@
 from yutnori.agents.baseline import (
     Agent,
     CaptureFirstAgent,
+    CommonRuleBasedAgent,
     GreedyFinishAgent,
     ProjectRFRuleBasedAgent,
     RandomAgent,
@@ -12,6 +13,7 @@ from yutnori.agents.baseline import (
 __all__ = [
     "Agent",
     "CaptureFirstAgent",
+    "CommonRuleBasedAgent",
     "GreedyFinishAgent",
     "ProjectRFRuleBasedAgent",
     "RandomAgent",

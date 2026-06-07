@@ -9,13 +9,20 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
 from yutnori.agents import (
     Agent,
     CaptureFirstAgent,
+    CommonRuleBasedAgent,
     GreedyFinishAgent,
     ProjectRFRuleBasedAgent,
     RandomAgent,
 )
 from yutnori.env import OBSERVATION_MODE_BASE, REWARD_MODE_TERMINAL, YutnoriEnv
 
-OPPONENT_NAMES = ("random", "capture_first", "greedy_finish", "project_rf_rule")
+OPPONENT_NAMES = (
+    "random",
+    "capture_first",
+    "greedy_finish",
+    "project_rf_rule",
+    "common_rule_based",
+)
 VEC_ENV_DUMMY = "dummy"
 VEC_ENV_SUBPROC = "subproc"
 VEC_ENV_TYPES = (VEC_ENV_DUMMY, VEC_ENV_SUBPROC)
@@ -32,6 +39,8 @@ def make_opponent(name: str, *, seed: int | None = None) -> Agent:
         return GreedyFinishAgent()
     if name == "project_rf_rule":
         return ProjectRFRuleBasedAgent()
+    if name == "common_rule_based":
+        return CommonRuleBasedAgent()
     raise ValueError(
         f"unknown opponent {name!r}; expected one of {', '.join(OPPONENT_NAMES)}"
     )

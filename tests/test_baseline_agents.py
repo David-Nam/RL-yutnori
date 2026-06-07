@@ -1,6 +1,11 @@
 import pytest
 
-from yutnori.agents import CaptureFirstAgent, GreedyFinishAgent, RandomAgent
+from yutnori.agents import (
+    CaptureFirstAgent,
+    CommonRuleBasedAgent,
+    GreedyFinishAgent,
+    RandomAgent,
+)
 from yutnori.agents.baseline import (
     ProjectRFRuleBasedAgent,
     project_rf_action_score,
@@ -237,3 +242,15 @@ def test_project_rf_rule_agent_breaks_score_ties_by_current_action_id():
     action = ProjectRFRuleBasedAgent().select_action(state, state.get_legal_actions())
 
     assert action == encode_action(3, YutResult.DO)
+
+
+def test_common_rule_agent_breaks_score_ties_by_smallest_action_id():
+    state = GameState()
+    state.set_pool(YutResult.DO)
+
+    action = CommonRuleBasedAgent().select_action(
+        state,
+        state.get_legal_actions(),
+    )
+
+    assert action == encode_action(0, YutResult.DO)

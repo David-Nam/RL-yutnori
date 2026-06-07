@@ -89,6 +89,20 @@ class ProjectRFRuleBasedAgent:
         )
 
 
+class CommonRuleBasedAgent:
+    """Frozen common evaluator rule agent with smallest-action tie breaking."""
+
+    name = "common_rule_based"
+
+    def select_action(self, state: GameState, legal_actions: list[int]) -> int:
+        if not legal_actions:
+            raise ValueError("legal_actions must not be empty")
+        return max(
+            legal_actions,
+            key=lambda action: (project_rf_action_score(state, action), -action),
+        )
+
+
 def evaluate_action(state: GameState, action: int) -> ActionEvaluation:
     if not state.is_legal_action(action):
         raise ValueError(f"illegal action cannot be evaluated: {action}")

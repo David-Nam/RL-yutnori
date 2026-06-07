@@ -462,3 +462,97 @@ Pure PPO 3-seed 평균: 59.51%
 이 순서는 추가 학습 없이 이미 생성한 checkpoint를 활용한다. 학습 후반의
 정책 변동 때문에 놓쳤을 수 있는 최적 모델을 먼저 찾은 뒤, 그래도 부족할
 때만 정책 구조를 변경한다는 점에서 실험 흐름도 명확하다.
+
+## 16. 공통 평가 가이드 적용
+
+팀 공통 가이드가 추가되면서 기존 평가와 다음 차이가 생겼다.
+
+- 2,500개 base seed마다 모델 선공과 후공을 한 번씩 실행
+- 선공 2,500판, 후공 2,500판을 정확히 보장
+- Rule-based score 동점 시 가장 작은 action ID 선택
+- full game runner를 사용해 learner 첫 행동 전 종료도 정상 게임으로 집계
+- 전체/선공/후공 승률, 95% CI, illegal, error, 실행 시간을 함께 보고
+
+기존 `ProjectRFRuleBasedAgent`는 동점에서 큰 action ID를 선택했다. 과거
+실험을 재현하기 위해 기존 agent는 보존하고, 공통 평가와 재학습에는
+별도의 `CommonRuleBasedAgent`를 사용한다.
+
+평가 script는 `scripts/evaluate_common_rule.py`다. 현재 가이드 문서에는
+실제 공통 seed 목록이 없으므로 이번 검증은 임시로
+`100000~102499`를 사용했다. 결과 JSON에 seed 목록 SHA-256
+`ca2043aa...370a1`을 기록했다. 팀이 seed 목록을 확정하면 `--seed-file`로
+같은 JSON 배열을 전달해야 최종 공식 비교가 된다.
+
+## 17. 기존 30M 모델의 공통 평가
+
+| seed | 전체 | 선공 | 후공 | 95% CI | illegal/error |
+| ---: | ---: | ---: | ---: | --- | --- |
+| 0 | 0.5734 | 0.5880 | 0.5588 | 0.5596~0.5870 | 0 / 0 |
+| 1 | 0.5594 | 0.5760 | 0.5428 | 0.5456~0.5731 | 0 / 0 |
+| 2 | 0.5620 | 0.5756 | 0.5484 | 0.5482~0.5757 | 0 / 0 |
+
+```text
+3-seed pooled: 8474 / 15000 = 0.5649
+seed 표준편차: 0.0061
+선공 pooled: 0.5799
+후공 pooled: 0.5500
+pooled 95% CI: 0.5570~0.5728
+```
+
+기존 평가 평균 `0.5951`과 비교하면 공통 결과는 `3.02%p` 낮다.
+
+원인을 분리하기 위해 같은 paired seed에서 상대만 기존 큰-ID 동점 agent로
+바꿔 진단 평가했다.
+
+```text
+기존 큰-ID agent + paired seed: 0.5878
+공통 작은-ID agent + paired seed: 0.5649
+```
+
+평가 pairing과 seed 배정 변화는 약 `-0.73%p`, opponent 동점 정책 변화는
+추가로 약 `-2.29%p` 영향을 줬다. 따라서 주된 하락은 평가 통계 방식이
+아니라 실제 상대 정책 변경에서 발생했다.
+
+## 18. 재학습 필요성
+
+규칙상 같은 상태의 말은 대칭이지만 PPO observation은 네 말의 상태를
+말 ID별 슬롯으로 전달한다. 기존 상대는 동점에서 큰 action ID를 선택했고,
+공통 상대는 작은 action ID를 선택한다. 이 차이는 상대 말의 ID별 배치
+패턴을 바꾸며, 모델이 기존 패턴에 적응했다면 정책 입력 분포도 달라진다.
+
+따라서 기존 checkpoint만 고르는 것으로는 충분하지 않다. 먼저 공통 상대를
+직접 사용해 같은 `tactical + terminal` PPO를 다시 학습하는 것이 가장
+작고 논리적인 변경이다. observation이나 reward까지 동시에 바꾸면 어떤
+요인이 개선을 만들었는지 분리하기 어려우므로 이번 야간 학습에서는
+그대로 유지한다.
+
+## 19. 12시간 야간 학습 계획
+
+```text
+opponent: common_rule_based
+observation: tactical
+reward: terminal
+seeds: 0, 1, 2
+timesteps: seed별 40M
+n_envs: 12
+vector env: SubprocVecEnv
+device: NVIDIA A100
+checkpoint: 4M 간격
+final eval: 공통 paired 5000판
+```
+
+30M 학습이 seed당 약 3시간이었으므로 40M은 seed당 약 4시간, 세 seed는
+약 12시간으로 예상한다. 평가와 저장 시간을 포함하면 12시간을 조금 넘을
+수 있다.
+
+실행 명령:
+
+```bash
+scripts/run_common_rule_40m_training.sh --dry-run
+scripts/run_common_rule_40m_training.sh
+```
+
+스크립트는 세 seed를 순차 학습하고 각 최종 모델을 공통 paired 5000판으로
+평가한다. 조기 종료는 사용하지 않는다. 40M 결과가 `58~60%`이면 저장된
+후반 checkpoint를 공통 evaluator로 비교하고, 58% 미만이면 hybrid와
+말 ID permutation에 강한 observation 설계를 다음 후보로 검토한다.

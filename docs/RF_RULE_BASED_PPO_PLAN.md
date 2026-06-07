@@ -1252,16 +1252,9 @@ CPU 병렬화 결과:
 - 현재 결과는 사전 기준의 `58~60%` 구간에 해당한다. Step 15로 즉시
   넘어가기 전에 저장된 후반 checkpoint를 비교한다.
 
-다음 commit 단위 작업:
-
-- 21M, 24M, 27M, 30M checkpoint를 일괄 평가하는 script를 추가한다.
-- selection 평가는 공식 평가와 다른 evaluation seed로 각 checkpoint를
-  1000판 평가한다.
-- seed별 상위 checkpoint만 기본 seed `100000`의 공식 5000판으로
-  재검증한다.
-- 결과 JSON에 evaluation seed를 기록하고, 평가 집계 summary를 생성한다.
-- checkpoint 재검증에서도 안정적인 60% 후보를 찾지 못하면 Step 15
-  hybrid evaluation policy 구현으로 넘어간다.
+기존 다음 작업은 후반 checkpoint 선별이었으나, 팀 공통 평가 가이드가
+새로 확정되면서 우선순위를 변경한다. 기존 checkpoint는 공통 opponent와
+학습 상대가 다르므로 먼저 공통 기준 평가와 재학습을 수행한다.
 
 검증:
 
@@ -1269,9 +1262,127 @@ CPU 병렬화 결과:
 - starting player 분포가 정상이어야 한다.
 - pure PPO 후보가 60% 이상인지 판단 가능해야 한다.
 
+### Step 14A. 공통 Rule-based 평가 프로토콜 적용
+
+상태: evaluator 구현 및 기존 30M 모델 평가 완료, 공통 상대 40M 재학습 준비 완료
+
+기존 평가와 공통 가이드의 차이:
+
+| 항목 | 기존 평가 | 공통 평가 |
+| --- | --- | --- |
+| 선공 | episode마다 무작위 | 정확히 2500판 |
+| 후공 | episode마다 무작위 | 정확히 2500판 |
+| seed | episode별 연속 seed | base seed마다 선공/후공 한 쌍 |
+| RF 동점 | 큰 action ID | 작은 action ID |
+| opponent opening terminal | env reset에서 재표본 가능 | full game으로 정상 집계 |
+| 보고 | 전체 승률 중심 | 전체/선공/후공, CI, error, 시간 |
+
+구현:
+
+- `CommonRuleBasedAgent`를 기존 `ProjectRFRuleBasedAgent`와 분리한다.
+- 점수식은 동일하게 유지하고 동점일 때 작은 action ID를 선택한다.
+- `evaluate_common_rule_policy()`는 `GameState`를 직접 실행한다.
+- base seed마다 독립된 두 게임을 만들고 모델 선공/후공을 한 번씩 실행한다.
+- PPO는 deterministic prediction과 action mask를 사용한다.
+- illegal action은 해당 게임 패배로 기록한다.
+- 기타 예외와 decision 10000 초과는 evaluation error로 기록한다.
+- `scripts/evaluate_common_rule.py`는 다음을 JSON으로 저장한다.
+  - 전체, 선공, 후공 승률
+  - Wilson 95% confidence interval
+  - seed 목록 SHA-256
+  - illegal action과 evaluation error
+  - 평균 turn, decision, 실행 시간
+  - model type, training seed, observation, reward metadata
+- 실제 공통 seed 목록이 아직 문서에 없으므로 기본값은 임시로
+  `100000~102499`를 사용한다. 팀이 목록을 확정하면 `--seed-file`로
+  동일한 JSON 정수 배열을 전달한다.
+
+기존 30M 모델 공통 평가 결과:
+
+| training seed | wins | overall | first | second | 95% CI |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 0 | 2867 | 0.5734 | 0.5880 | 0.5588 | 0.5596~0.5870 |
+| 1 | 2797 | 0.5594 | 0.5760 | 0.5428 | 0.5456~0.5731 |
+| 2 | 2810 | 0.5620 | 0.5756 | 0.5484 | 0.5482~0.5757 |
+
+```text
+pooled wins / games: 8474 / 15000
+mean/pooled win rate: 0.5649
+population stdev: 0.0061
+pooled first win rate: 0.5799
+pooled second win rate: 0.5500
+pooled Wilson 95% CI: 0.5570~0.5728
+illegal actions: 0
+evaluation errors: 0
+```
+
+하락 원인 분리:
+
+- 동일 paired seed에서 기존 큰-ID 동점 agent 상대 평균: `0.5878`
+- 공통 작은-ID 동점 agent 상대 평균: `0.5649`
+- 기존 무작위 선공 평가 평균 `0.5951` 대비:
+  - paired seed 및 정확한 선후공 적용 영향: 약 `-0.0073`
+  - 공통 동점 정책 변경의 추가 영향: 약 `-0.0229`
+  - 전체 차이: 약 `-0.0302`
+- 주된 하락 원인은 평가 표본 배정이 아니라 opponent tie-break 변경이다.
+- 말 ID는 규칙상 대칭이지만 현재 PPO observation은 말별 슬롯을 그대로
+  사용한다. 기존 PPO가 큰 action ID를 고르는 opponent의 말 ID 배치 패턴에
+  적응했을 가능성이 높다.
+
+재학습 판단:
+
+- 기존 checkpoint 선별만으로는 학습 상대 mismatch를 해결할 수 없다.
+- observation/action/reward를 즉시 재설계하기보다 먼저 정확한 공통
+  opponent로 같은 `tactical + terminal` PPO를 fresh training한다.
+- 12시간 가용 시간을 활용해 seed별 40M, 총 3개 seed를 순차 실행한다.
+
+40M 실행 설정:
+
+```text
+opponent: common_rule_based
+observation: tactical
+reward: terminal
+seeds: 0 1 2
+timesteps: seed별 40M
+n_envs: 12
+vec_env: subproc
+device: cuda
+checkpoint: 4M 간격
+early stopping: 사용하지 않음
+final evaluation: 공통 paired 5000판
+```
+
+실행:
+
+```bash
+scripts/run_common_rule_40m_training.sh --dry-run
+scripts/run_common_rule_40m_training.sh
+```
+
+예상 시간:
+
+- 30M 처리량 약 `2784 timesteps/s`를 기준으로 seed별 약 4시간
+- seed 3개 학습 약 12시간
+- 공통 평가와 저장 overhead를 포함하면 12시간을 조금 넘을 수 있다.
+
+검증:
+
+- 공통 evaluator 관련 targeted test 통과
+- `common_rule_based` opponent PPO CPU smoke training 통과
+- 40M runner syntax 및 dry-run 통과
+- 전체 regression: `139 passed`
+
+다음 판단:
+
+- 40M 평균이 60% 이상이면 pure PPO 최종 후보로 채택한다.
+- 일부 seed만 통과하거나 `58~60%`이면 24M 이후 checkpoint를 공통
+  evaluator로 선별한다.
+- 40M에서도 평균이 58% 미만이면 hybrid 또는 opponent piece permutation에
+  강한 observation 재설계를 우선 검토한다.
+
 ### Step 15. hybrid evaluation policy 구현
 
-상태: Step 14 후반 checkpoint 선별 결과까지 보류
+상태: 공통 상대 40M 재학습 결과까지 보류
 
 구현:
 
@@ -1309,6 +1420,6 @@ CPU 병렬화 결과:
 - integration test: env factory, action mask, observation mode, reward mode,
   PPO smoke train/eval.
 - game smoke: RF opponent tournament 100~1000판.
-- official verification: RF opponent 5000판, seed 3개 이상.
+- official verification: 공통 base seed 2500개 paired 5000판, seed 3개 이상.
 - regression: base observation + terminal reward에서는 기존 테스트가 그대로
   통과해야 한다.

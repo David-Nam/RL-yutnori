@@ -108,7 +108,8 @@ illegal actions: 0
 
 같은 PPO 후보를 seed별 30M timesteps로 fresh training했습니다. 12개 CPU
 core를 활용하도록 `SubprocVecEnv`와 `n_envs=12`를 사용했고, 학습은 A100
-GPU에서 수행했습니다.
+GPU에서 수행했습니다. 아래 결과는 공통 평가 가이드 도입 전의 기존
+`project_rf_rule` 무작위 선공 평가 결과입니다.
 
 | Seed | Wins | Losses | Win Rate | Passed | Illegal Actions |
 | ---: | ---: | ---: | ---: | :---: | ---: |
@@ -130,26 +131,52 @@ illegal actions: 0
 확보했습니다. 다만 전체 seed 평균은 60%에 0.49%p 부족하고 seed 1, 2는
 기준 미달이므로, 안정적인 최종 후보가 확정됐다고 보지는 않습니다.
 
+### Common Paired Evaluation
+
+이후 팀 공통 평가 가이드를 적용했습니다. 공통 평가는 2,500개 base seed마다
+모델 선공과 후공을 한 번씩 실행해 정확히 2,500판씩, 총 5,000판을
+평가합니다. Rule-based Agent의 점수가 같으면 가장 작은 action ID를
+선택합니다.
+
+| Seed | 전체 승률 | 선공 승률 | 후공 승률 | 95% CI |
+| ---: | ---: | ---: | ---: | --- |
+| 0 | **57.34%** | 58.80% | 55.88% | 55.96~58.70% |
+| 1 | 55.94% | 57.60% | 54.28% | 54.56~57.31% |
+| 2 | 56.20% | 57.56% | 54.84% | 54.82~57.57% |
+
+```text
+3-seed 평균/pooled 승률: 56.49%
+선공 pooled 승률: 57.99%
+후공 pooled 승률: 55.00%
+seed 표준편차: 0.61%p
+illegal actions: 0
+evaluation errors: 0
+```
+
+같은 paired seed에서 기존 큰 action ID 동점 규칙을 사용하면 평균은
+58.78%였습니다. 평가 pairing 변화로 약 0.73%p, 공통 opponent의 동점 정책
+변화로 추가 약 2.29%p가 내려갔습니다. 현재 PPO는 기존 opponent의 말 ID
+선택 패턴에도 적응했으므로 공통 opponent를 상대로 다시 학습해야 합니다.
+
 자세한 분석은 [팀 회의 보고서](docs/RF_PPO_TEAM_MEETING_REPORT.md)와
 [개발 계획 및 진행 기록](docs/RF_RULE_BASED_PPO_PLAN.md)에서 확인할 수
 있습니다.
 
 ## Current Status
 
-30M 최종 모델 평가까지 완료했습니다. 현재 pure PPO 최고 단일 결과는
-seed 0의 `60.00%`이고, 3개 seed 평균은 `59.51%`입니다.
+공통 평가에서 기존 30M 모델의 최고 승률은 `57.34%`, 3개 seed 평균은
+`56.49%`였습니다. 기존 기준의 60% 통과 결과는 공통 기준에서는 재현되지
+않았습니다.
 
 ```text
-현재 판단: 공식 60% 달성 후보 확보, 안정적인 최종 후보는 미확정
-다음 검증: 21M, 24M, 27M, 30M checkpoint 비교
-후속 후보: checkpoint 검증 후에도 미달이면 hybrid policy
+현재 판단: 공통 opponent에 맞춘 재학습 필요
+다음 실행: tactical + terminal, common_rule_based, seed별 40M
+후속 판단: 40M 공통 평가 후 checkpoint 탐색 또는 hybrid
 ```
 
-학습 후반의 최종 checkpoint가 항상 최고라는 보장은 없습니다. 먼저 저장된
-후반 checkpoint를 별도 selection seed로 선별하고, 선택된 모델만 공식
-5000판으로 재검증합니다. 여기서도 안정적인 60%를 확보하지 못하면 PPO
-action을 기본으로 사용하면서 명확한 완주와 잡기 상황만 override하는
-hybrid policy로 넘어갈 예정입니다.
+40M fresh run은 12 CPU worker와 A100을 사용하며 seed 3개를 순차 실행합니다.
+현재 처리량 기준 예상 시간은 약 12시간입니다. 학습 완료 후 공통 paired
+5,000판 평가도 자동으로 실행합니다.
 
 ## Setup
 
@@ -173,9 +200,8 @@ CUDA GPU 사용을 권장합니다.
 .venv/bin/python -m pytest -q
 ```
 
-현재 30M 병렬 학습 실행 기준으로 규칙 엔진, tactical feature, reward,
-action mask, subprocess vector environment를 포함한 전체 테스트가
-통과합니다.
+공통 paired evaluator, 규칙 엔진, tactical feature, reward, action mask,
+subprocess vector environment를 포함한 전체 테스트가 통과합니다.
 
 ## Training
 
@@ -222,21 +248,39 @@ logs/ppo_step14_30m_subproc
 학습 중 CPU worker 상태는 `htop`, GPU 상태는 `nvidia-smi`로 확인할 수
 있습니다.
 
-## Evaluation
+### Common Rule 40M Training
 
-저장된 PPO 모델을 RF Agent 상대 공식 조건으로 평가하려면 다음 명령을
-사용합니다.
+실행 명령을 먼저 확인합니다.
 
 ```bash
-.venv/bin/python scripts/evaluate_rf_target.py \
-  --model-path runs/<run-name>/model.zip \
-  --episodes 5000 \
-  --device cuda \
-  --output runs/<run-name>/eval_project_rf_rule_official_5000.json
+scripts/run_common_rule_40m_training.sh --dry-run
 ```
 
-평가 결과 JSON에는 승패, 승률, 선/후공 분포, 평균 turn/decision 수,
-illegal action 수와 60% 통과 여부가 기록됩니다.
+실제 40M 학습과 공통 평가를 순차 실행합니다.
+
+```bash
+scripts/run_common_rule_40m_training.sh
+```
+
+기본 설정은 `common_rule_based`, `tactical + terminal`, seed `0, 1, 2`,
+seed별 40M, `n_envs=12`, `SubprocVecEnv`, CUDA입니다.
+
+## Evaluation
+
+저장된 PPO 모델을 공통 paired 조건으로 평가하려면 다음 명령을 사용합니다.
+
+```bash
+.venv/bin/python scripts/evaluate_common_rule.py \
+  --model-path runs/<run-name>/model.zip \
+  --training-seed 0 \
+  --device cuda \
+  --output runs/<run-name>/eval_common_rule_paired_5000.json
+```
+
+기본 base seed는 임시로 `100000~102499`를 사용합니다. 팀이 실제 공통 seed
+목록을 확정하면 JSON 배열 파일을 `--seed-file`로 전달해야 합니다. 결과에는
+seed 목록 SHA-256, 전체·선공·후공 승률, Wilson 95% 신뢰구간, 평균
+turn/decision 수, illegal action, evaluation error와 실행 시간이 기록됩니다.
 
 ## Documentation
 
