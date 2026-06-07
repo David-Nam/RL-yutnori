@@ -32,6 +32,7 @@ from tqdm.auto import tqdm  # noqa: E402
 from yutnori.env import OBSERVATION_MODES, REWARD_MODES  # noqa: E402
 from yutnori.training import (  # noqa: E402
     OPPONENT_NAMES,
+    VEC_ENV_TYPES,
     evaluate_maskable_policy,
     make_yutnori_vec_env,
 )
@@ -45,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--observation-mode", choices=OBSERVATION_MODES, default="base")
     parser.add_argument("--reward-mode", choices=REWARD_MODES, default="terminal")
     parser.add_argument("--n-envs", type=int, default=1)
+    parser.add_argument("--vec-env", choices=VEC_ENV_TYPES, default="dummy")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--n-steps", type=int, default=2048)
@@ -85,6 +87,7 @@ def main() -> None:
         seed=args.seed,
         observation_mode=args.observation_mode,
         reward_mode=args.reward_mode,
+        vec_env_type=args.vec_env,
     )
     try:
         model = MaskablePPO(
@@ -618,6 +621,7 @@ def _config_dict(args: argparse.Namespace, run_dir: Path) -> dict[str, Any]:
         "reward_mode": args.reward_mode,
         "total_timesteps": args.total_timesteps,
         "n_envs": args.n_envs,
+        "vec_env": args.vec_env,
         "device": args.device,
         "learning_rate": args.learning_rate,
         "n_steps": args.n_steps,

@@ -10,6 +10,7 @@ SEEDS="${SEEDS:-0 1 2}"
 TOTAL_TIMESTEPS="${TOTAL_TIMESTEPS:-10000000}"
 TIMESTEPS_LABEL="${TIMESTEPS_LABEL:-10m}"
 N_ENVS="${N_ENVS:-16}"
+VEC_ENV="${VEC_ENV:-dummy}"
 DEVICE="${DEVICE:-cuda}"
 TRAIN_EVAL_EPISODES="${TRAIN_EVAL_EPISODES:-100}"
 OFFICIAL_EVAL_EPISODES="${OFFICIAL_EVAL_EPISODES:-5000}"
@@ -57,6 +58,7 @@ run_combo() {
     --total-timesteps "${TOTAL_TIMESTEPS}" \
     --timesteps-label "${TIMESTEPS_LABEL}" \
     --n-envs "${N_ENVS}" \
+    --vec-env "${VEC_ENV}" \
     --device "${DEVICE}" \
     --train-eval-episodes "${TRAIN_EVAL_EPISODES}" \
     --final-eval-episodes 0 \

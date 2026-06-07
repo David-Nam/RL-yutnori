@@ -723,6 +723,7 @@ seeds: 0 1 2
 total_timesteps: 3000000
 timesteps_label: 3m
 n_envs: 16
+vec_env: dummy
 device: cuda
 train_eval_episodes: 100
 final_eval_episodes: 1000
@@ -854,11 +855,11 @@ RF target 1000판 평가 결과:
 
 ### Step 14. 장기 PPO 후보 학습 및 공식 검증
 
-상태: 1차 장기 학습 완료
+상태: 30M 확장 실행 준비 완료
 
 구현:
 
-- 소규모 sweep 1순위 후보인 `tactical + terminal`을 `10M~20M`
+- 소규모 sweep 1순위 후보인 `tactical + terminal`을 `10M~30M`
   timesteps로 학습한다.
 - 비교가 필요하면 2순위 후보인 `tactical + rf_shaped`도 같은 조건으로
   학습한다.
@@ -873,7 +874,7 @@ RF target 1000판 평가 결과:
   - seeds: `0, 1, 2`
   - timesteps: `10M`
   - eval games: `5000`
-- 1차 결과가 `58~60%` 근처까지 상승하면 같은 구성을 `20M`까지 확장한다.
+- 1차 결과가 `58~60%` 근처까지 상승하면 같은 구성을 `30M`까지 확장한다.
 - 1차 결과가 `53~55%`대에 머물면 pure PPO만으로는 목표 달성이 불확실하므로
   Step 15 hybrid policy 구현 우선순위를 높인다.
 - `tactical + terminal`의 장기 학습이 불안정하거나 특정 seed에서 크게 무너지면
@@ -946,12 +947,10 @@ PROFILE=comparison scripts/run_step14_long_training.sh
 PROFILE=both scripts/run_step14_long_training.sh
 ```
 
-- 20M 학습은 현재 resume 방식이 아니라 동일 조건의 fresh run으로 실행한다.
+- 확장 학습은 현재 resume 방식이 아니라 fresh run으로 실행한다.
 
 ```bash
-TOTAL_TIMESTEPS=20000000 \
-TIMESTEPS_LABEL=20m \
-scripts/run_step14_long_training.sh
+scripts/run_step14_30m_training.sh
 ```
 
 - 기존 run directory가 있으면 기본적으로 재사용/skip한다.
@@ -1057,16 +1056,85 @@ all passed: false
 - seed 1, 2는 `58%` 중반까지 올라왔고, seed 간 편차도 작다.
 - 하지만 모든 seed가 공식 pass threshold `0.60`에는 도달하지 못했다.
 - 현재 결과는 Step 14의 사전 판단 기준 중 `58~60% 근처`에 해당하므로,
-  pure PPO를 바로 포기하기보다 `20M` 확장을 먼저 시도할 근거가 있다.
-- 단, 현재 학습 스크립트는 resume을 지원하지 않으므로 20M은 fresh run이다.
+  pure PPO를 바로 포기하기보다 `30M` 확장을 먼저 시도할 근거가 있다.
+- 현재 학습 스크립트는 resume을 지원하지 않으므로 30M은 fresh run이다.
   10M checkpoint에서 이어 학습하려면 별도 resume 기능 구현이 필요하다.
 
 결론:
 
 - 현재 pure PPO 최고 후보는 계속 `tactical + terminal`이다.
 - 10M 기준 목표 60%는 미달이다.
-- 다음 개발/실험 우선순위는 `tactical + terminal` 20M 확장이다.
-- 20M에서도 60%를 넘지 못하면 Step 15 hybrid policy 구현으로 넘어간다.
+- 다음 개발/실험 우선순위는 `tactical + terminal` 30M 확장이다.
+- 30M에서도 60%를 넘지 못하면 Step 15 hybrid policy 구현으로 넘어간다.
+
+30M 실행과 CPU 병렬화:
+
+- 기존 학습은 `DummyVecEnv`를 사용했다. `n_envs=16`이어도 한 Python
+  process에서 env를 순차 실행하므로 CPU 12 core를 병렬로 활용하지 못했다.
+- `make_yutnori_vec_env()`에 아래 vector env mode를 추가한다.
+
+```text
+dummy: 기존 단일 process 순차 실행
+subproc: env별 subprocess 병렬 실행
+```
+
+- `scripts/train_ppo.py`와 `scripts/run_ppo_long_sweep.py`에
+  `--vec-env dummy|subproc` 옵션을 추가한다.
+- 기존 학습의 기본값은 `dummy`로 유지해 이전 실험 재현성을 보존한다.
+- 30M 전용 `scripts/run_step14_30m_training.sh`는 다음 설정을 사용한다.
+
+```text
+observation: tactical
+reward: terminal
+opponent: project_rf_rule
+seeds: 0 1 2
+total_timesteps: 30000000
+timesteps_label: 30m
+n_envs: 12
+vec_env: subproc
+device: cuda
+checkpoint_freq: 3000000
+official_eval_episodes: 5000
+runs_root: runs/ppo_step14_30m_subproc
+logs_root: logs/ppo_step14_30m_subproc
+```
+
+- 각 env worker가 별도 process로 실행되며, BLAS/OpenMP thread는 process당
+  1개로 제한해 12개 worker가 불필요하게 thread를 중첩 생성하지 않게 한다.
+- 10M은 `n_envs=16 + dummy`, 30M은 `n_envs=12 + subproc`이므로
+  학습량만 바꾼 완전한 단일 변수 비교는 아니다. 이번 30M 설정은
+  12 core 활용과 최종 성능 탐색을 우선한다.
+- 30M rollout size는 `12 * 2048 = 24576`이고, batch size `2048`로 정확히
+  나누어져 PPO minibatch 구성에는 나머지가 생기지 않는다.
+- 사용자는 먼저 dry-run을 확인한다.
+
+```bash
+scripts/run_step14_30m_training.sh --dry-run
+```
+
+- 실제 실행은 아래 명령 하나로 진행한다.
+
+```bash
+scripts/run_step14_30m_training.sh
+```
+
+- 실행 중 CPU 활용은 별도 terminal에서 아래처럼 확인한다.
+
+```bash
+htop
+```
+
+- 30M은 10M model에서 이어가는 resume 학습이 아니라 seed별 fresh run이다.
+
+30M 실행 준비 검증:
+
+- `SubprocVecEnv`가 tactical observation과 action mask를 정상 전달하는
+  unit test 통과
+- `run_ppo_long_sweep.py`가 `--vec-env subproc`를 train command에 전달하는
+  unit test 통과
+- subprocess env를 사용한 MaskablePPO CPU smoke 학습 통과
+- 30M script dry-run에서 seed 3개 학습과 공식 5000판 평가 command 생성 확인
+- 전체 regression: `131 passed`
 
 검증:
 

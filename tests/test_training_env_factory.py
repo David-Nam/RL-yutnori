@@ -1,11 +1,17 @@
 import numpy as np
 import pytest
 from sb3_contrib.common.maskable.utils import get_action_masks
+from stable_baselines3.common.vec_env import SubprocVecEnv
 
 from yutnori.agents import ProjectRFRuleBasedAgent
 from yutnori.core import ACTION_SIZE
 from yutnori.env import REWARD_MODE_RF_SHAPED, TACTICAL_OBSERVATION_SIZE
-from yutnori.training import OPPONENT_NAMES, make_yutnori_env, make_yutnori_vec_env
+from yutnori.training import (
+    OPPONENT_NAMES,
+    VEC_ENV_SUBPROC,
+    make_yutnori_env,
+    make_yutnori_vec_env,
+)
 from yutnori.training.env_factory import make_opponent
 
 
@@ -76,6 +82,33 @@ def test_make_yutnori_vec_env_exposes_action_masks():
         assert masks.any(axis=1).all()
     finally:
         vec_env.close()
+
+
+def test_make_yutnori_vec_env_supports_subprocess_workers():
+    vec_env = make_yutnori_vec_env(
+        opponent="project_rf_rule",
+        n_envs=2,
+        seed=35,
+        observation_mode="tactical",
+        vec_env_type=VEC_ENV_SUBPROC,
+    )
+
+    try:
+        obs = vec_env.reset()
+        masks = get_action_masks(vec_env)
+
+        assert isinstance(vec_env, SubprocVecEnv)
+        assert obs.shape == (2, TACTICAL_OBSERVATION_SIZE)
+        assert masks.dtype == np.bool_
+        assert masks.shape == (2, ACTION_SIZE)
+        assert masks.any(axis=1).all()
+    finally:
+        vec_env.close()
+
+
+def test_make_yutnori_vec_env_rejects_unknown_type():
+    with pytest.raises(ValueError, match="vec_env_type"):
+        make_yutnori_vec_env(vec_env_type="unknown")
 
 
 def test_make_yutnori_env_supports_tactical_observation_mode():

@@ -2,6 +2,9 @@
 
 from yutnori.training.env_factory import (
     OPPONENT_NAMES,
+    VEC_ENV_DUMMY,
+    VEC_ENV_SUBPROC,
+    VEC_ENV_TYPES,
     make_opponent,
     make_yutnori_env,
     make_yutnori_vec_env,
@@ -28,6 +31,9 @@ __all__ = [
     "RF_SHAPING_CAPTURE_WEIGHT",
     "RF_SHAPING_FINISH_WEIGHT",
     "RF_SHAPING_SHORTCUT_BONUS",
+    "VEC_ENV_DUMMY",
+    "VEC_ENV_SUBPROC",
+    "VEC_ENV_TYPES",
     "evaluate_maskable_policy",
     "make_opponent",
     "make_yutnori_env",

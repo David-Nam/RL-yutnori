@@ -27,6 +27,7 @@ from yutnori.env import (  # noqa: E402
     REWARD_MODES,
 )
 from yutnori.training.env_factory import OPPONENT_NAMES  # noqa: E402
+from yutnori.training.env_factory import VEC_ENV_TYPES  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--total-timesteps", type=int, default=10_000_000)
     parser.add_argument("--timesteps-label", default=None)
     parser.add_argument("--n-envs", type=int, default=16)
+    parser.add_argument("--vec-env", choices=VEC_ENV_TYPES, default="dummy")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--n-steps", type=int, default=2048)
@@ -168,6 +170,8 @@ def _train_command(
         args.reward_mode,
         "--n-envs",
         str(args.n_envs),
+        "--vec-env",
+        args.vec_env,
         "--device",
         args.device,
         "--learning-rate",

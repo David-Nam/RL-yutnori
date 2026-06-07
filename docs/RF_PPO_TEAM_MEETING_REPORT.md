@@ -291,7 +291,7 @@ seed별 결과가 모두 `56.9%~58.6%`에 모여 있어, 특정 seed 하나만 �
 - 성능 향상의 핵심은 `rf_shaped` reward보다 `tactical` observation이다.
 - `terminal` reward가 RF target 상대 전체 승률에는 더 안정적이었다.
 - capture reward는 capture 성향을 키우지만, 전체 승률 최적화에는 부족했다.
-- 현재 모델은 60% 목표 바로 아래까지 접근했으므로, 20M 확장 실험의 가치가
+- 현재 모델은 60% 목표 바로 아래까지 접근했으므로, 30M 확장 실험의 가치가
   있다.
 
 ## 9. 다음 단계 제안
@@ -302,18 +302,25 @@ seed별 결과가 모두 `56.9%~58.6%`에 모여 있어, 특정 seed 하나만 �
 Pure PPO 최고 후보: tactical + terminal
 10M 공식 평균 승률: 57.95%
 목표 60%: 미달
-다음 우선순위: tactical + terminal 20M fresh run
+다음 우선순위: tactical + terminal 30M fresh run
 ```
 
-권장 다음 액션은 `20M` fresh run이다.
+팀 논의 후 다음 액션은 `30M` fresh run으로 확장했다.
 
 ```bash
-TOTAL_TIMESTEPS=20000000 \
-TIMESTEPS_LABEL=20m \
-scripts/run_step14_long_training.sh
+scripts/run_step14_30m_training.sh
 ```
 
-20M 결과 판단 기준은 다음과 같이 둔다.
+기존 10M 학습은 `DummyVecEnv`를 사용했기 때문에 `n_envs=16`이어도 env가
+한 process에서 순차 실행됐다. 30M 실행에서는 CPU 12 core를 활용하기 위해
+`SubprocVecEnv`와 `n_envs=12`를 사용한다. 각 env가 별도 process에서
+실행되며, BLAS/OpenMP thread는 process당 1개로 제한한다.
+
+따라서 10M과 30M은 timesteps만 바뀐 완전한 단일 변수 비교는 아니다.
+이번 설정은 동일한 PPO 후보를 유지하면서 CPU 병렬 활용과 최종 성능 탐색을
+우선한 실행 구성이다.
+
+30M 결과 판단 기준은 다음과 같이 둔다.
 
 - 평균 승률이 `60%` 이상이고 seed별 결과가 안정적이면 pure PPO 후보를
   최종 후보로 채택한다.
@@ -339,6 +346,6 @@ finish/capture 실수를 줄이는 목적이다.
 - 목표 `60%`에는 아직 미달했지만, 3M 평균 `53.3%`에서 의미 있게 상승했다.
 - seed 편차가 작아 결과는 안정적이다.
 - illegal action은 모든 공식 평가에서 `0`이었다.
-- 현재는 pure PPO 가능성을 한 번 더 확인할 가치가 있으므로 20M 확장을
+- 현재는 pure PPO 가능성을 한 번 더 확인할 가치가 있으므로 30M 확장을
   먼저 시도하는 것이 합리적이다.
-- 20M에서도 60%를 넘지 못하면 hybrid policy 구현으로 넘어간다.
+- 30M에서도 60%를 넘지 못하면 hybrid policy 구현으로 넘어간다.

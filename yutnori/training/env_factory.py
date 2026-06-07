@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
 
 from yutnori.agents import (
     Agent,
@@ -16,6 +16,9 @@ from yutnori.agents import (
 from yutnori.env import OBSERVATION_MODE_BASE, REWARD_MODE_TERMINAL, YutnoriEnv
 
 OPPONENT_NAMES = ("random", "capture_first", "greedy_finish", "project_rf_rule")
+VEC_ENV_DUMMY = "dummy"
+VEC_ENV_SUBPROC = "subproc"
+VEC_ENV_TYPES = (VEC_ENV_DUMMY, VEC_ENV_SUBPROC)
 
 
 def make_opponent(name: str, *, seed: int | None = None) -> Agent:
@@ -68,11 +71,14 @@ def make_yutnori_vec_env(
     starting_player: int | None = None,
     observation_mode: str = OBSERVATION_MODE_BASE,
     reward_mode: str = REWARD_MODE_TERMINAL,
+    vec_env_type: str = VEC_ENV_DUMMY,
 ) -> VecEnv:
-    """Create a DummyVecEnv whose child envs expose ``action_masks()``."""
+    """Create a vector env whose child envs expose ``action_masks()``."""
 
     if n_envs <= 0:
         raise ValueError("n_envs must be positive")
+    if vec_env_type not in VEC_ENV_TYPES:
+        raise ValueError(f"vec_env_type must be one of {', '.join(VEC_ENV_TYPES)}")
 
     env_fns: list[Callable[[], YutnoriEnv]] = []
     for rank in range(n_envs):
@@ -90,7 +96,10 @@ def make_yutnori_vec_env(
 
         env_fns.append(_init)
 
-    vec_env = DummyVecEnv(env_fns)
+    if vec_env_type == VEC_ENV_DUMMY:
+        vec_env = DummyVecEnv(env_fns)
+    else:
+        vec_env = SubprocVecEnv(env_fns, start_method="fork")
     if seed is not None:
         vec_env.seed(seed)
     return vec_env

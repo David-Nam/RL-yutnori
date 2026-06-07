@@ -91,6 +91,18 @@ def test_train_command_passes_reward_mode():
     assert command[mode_index + 1] == "rf_shaped"
 
 
+def test_train_command_passes_vec_env_type():
+    command = _train_command(
+        _args(vec_env="subproc"),
+        "project_rf_rule",
+        7,
+        Path("runs/ppo/project_rf_rule_seed_7"),
+    )
+
+    mode_index = command.index("--vec-env")
+    assert command[mode_index + 1] == "subproc"
+
+
 def test_eval_command_passes_observation_mode():
     command = _eval_command(
         _args(observation_mode="tactical"),
@@ -121,6 +133,7 @@ def _args(**overrides):
     defaults = {
         "total_timesteps": 10_000,
         "n_envs": 2,
+        "vec_env": "dummy",
         "device": "cpu",
         "learning_rate": 3e-4,
         "n_steps": 64,
