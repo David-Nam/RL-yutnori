@@ -556,3 +556,93 @@ scripts/run_common_rule_40m_training.sh
 평가한다. 조기 종료는 사용하지 않는다. 40M 결과가 `58~60%`이면 저장된
 후반 checkpoint를 공통 evaluator로 비교하고, 58% 미만이면 hybrid와
 말 ID permutation에 강한 observation 설계를 다음 후보로 검토한다.
+
+## 20. 40M 공통 상대 재학습 결과
+
+40M 재학습은 정상 완료됐다. 세 seed 모두 같은 git commit
+`52520ae8`에서 실행됐고, A100 GPU와 12개 subprocess env를 사용했다.
+
+```text
+opponent: common_rule_based
+observation: tactical
+reward: terminal
+timesteps: seed별 40,009,728
+checkpoint: 4M 간격 10개
+evaluation: 공통 paired 5000판
+seed source: range:100000:2500
+seed sha256: ca2043aa...370a1
+```
+
+공통 paired 5000판 평가 결과는 다음과 같다.
+
+| seed | wins | losses | overall | first | second | passed | 95% CI |
+| ---: | ---: | ---: | ---: | ---: | ---: | :---: | --- |
+| 0 | 2921 | 2079 | 0.5842 | 0.5900 | 0.5784 | false | 0.5705~0.5978 |
+| 1 | 3023 | 1977 | 0.6046 | 0.6076 | 0.6016 | true | 0.5910~0.6181 |
+| 2 | 3020 | 1980 | 0.6040 | 0.6132 | 0.5948 | true | 0.5904~0.6175 |
+
+집계:
+
+```text
+3-seed pooled: 8964 / 15000 = 0.5976
+seed 표준편차: 0.0095
+선공 pooled: 0.6036
+후공 pooled: 0.5916
+pooled 95% CI: 0.5897~0.6054
+통과 seed: 2 / 3
+illegal actions: 0
+evaluation errors: 0
+```
+
+기존 30M common 평가와 비교하면 개선 폭이 크다.
+
+```text
+30M common 평균: 0.5649
+40M common 평균: 0.5976
+개선 폭: +0.0327
+평균 추가 승수: seed당 +163.3승 / 5000판
+```
+
+특히 후공 성능이 `0.5500 -> 0.5916`으로 올라간 것이 중요하다. 기존 모델은
+후공에서 크게 약했는데, 공통 상대를 직접 학습하면서 이 약점이 상당히
+줄었다.
+
+## 21. 현재 결론
+
+이번 결과로 공통 기준을 통과하는 pure PPO 후보를 확보했다.
+
+```text
+최고 후보: seed 1 final model
+승률: 3023 / 5000 = 0.6046
+모델 유형: Pure RL
+```
+
+seed 2도 `0.6040`으로 거의 같은 수준이다. 따라서 제출 후보만 놓고 보면
+hybrid 없이도 목표를 달성했다.
+
+다만 안정성 관점에서는 아직 과제가 있다.
+
+- seed 0은 `0.5842`로 실패했다.
+- 3-seed 평균은 `0.5976`으로 60%보다 `0.24%p` 낮다.
+- pooled 95% CI는 `0.5897~0.6054`로 60%를 포함한다.
+- seed 1과 seed 2의 통과 margin은 각각 23승, 20승으로 크지는 않다.
+
+따라서 지금 결론은 “pure PPO 성공 후보 확보”이지, “충분한 margin의 최종
+후보 확정”은 아니다.
+
+## 22. 다음 액션
+
+새로운 40M+ 장기 학습을 바로 더 돌리기보다는, 이미 저장된 checkpoint를
+선별 평가하는 것이 우선이다.
+
+권장 순서:
+
+1. seed별 `32M`, `36M`, `40M` checkpoint를 공통 evaluator로 선별 평가한다.
+2. selection seed에서는 1000~2000판으로 빠르게 비교한다.
+3. 상위 후보만 공통 5000판으로 재검증한다.
+4. 더 나은 checkpoint가 없으면 seed 1 final model을 pure PPO 제출 후보로 둔다.
+5. checkpoint 선별 후에도 margin이 작으면 hybrid 또는 말 ID permutation에
+   강한 observation 개선을 검토한다.
+
+이 흐름은 이미 목표를 넘은 pure PPO 후보를 보존하면서, 추가 학습 없이
+통과 margin을 넓힐 수 있는지 먼저 확인하는 전략이다.

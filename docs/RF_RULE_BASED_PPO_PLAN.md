@@ -1264,7 +1264,7 @@ CPU 병렬화 결과:
 
 ### Step 14A. 공통 Rule-based 평가 프로토콜 적용
 
-상태: evaluator 구현 및 기존 30M 모델 평가 완료, 공통 상대 40M 재학습 준비 완료
+상태: evaluator 구현, 기존 30M 공통 평가, 공통 상대 40M 재학습 및 평가 완료
 
 기존 평가와 공통 가이드의 차이:
 
@@ -1380,9 +1380,114 @@ scripts/run_common_rule_40m_training.sh
 - 40M에서도 평균이 58% 미만이면 hybrid 또는 opponent piece permutation에
   강한 observation 재설계를 우선 검토한다.
 
+40M 실행 결과:
+
+- 실행 경로: `runs/ppo_common_rule_40m_subproc`
+- log 경로: `logs/ppo_common_rule_40m_subproc`
+- 학습 git commit: `52520ae8cfa69f36f40ad662a6af6e10fc3795e1`
+- 3개 seed 모두 같은 commit, 같은 설정으로 실행됐다.
+- 각 seed는 `40,009,728` timesteps까지 학습했다.
+- 각 seed마다 4M 간격 checkpoint 10개 생성 확인
+- 각 seed마다 `eval_common_rule_paired_5000.json` 생성 확인
+- 공통 evaluation seed source: `range:100000:2500`
+- seed list SHA-256:
+  `ca2043aa9201169d58d9aea993ac1d30af5f6c1202387b4ece834a36218370a1`
+
+공통 paired 5000판 평가:
+
+| training seed | wins | losses | overall | first | second | passed | 95% CI |
+| ---: | ---: | ---: | ---: | ---: | ---: | :---: | --- |
+| 0 | 2921 | 2079 | 0.5842 | 0.5900 | 0.5784 | false | 0.5705~0.5978 |
+| 1 | 3023 | 1977 | 0.6046 | 0.6076 | 0.6016 | true | 0.5910~0.6181 |
+| 2 | 3020 | 1980 | 0.6040 | 0.6132 | 0.5948 | true | 0.5904~0.6175 |
+
+집계:
+
+```text
+pooled wins / games: 8964 / 15000
+mean/pooled win rate: 0.5976
+population stdev: 0.0095
+min / max: 0.5842 / 0.6046
+pooled first win rate: 0.6036
+pooled second win rate: 0.5916
+pooled Wilson 95% CI: 0.5897~0.6054
+passed seeds: 2 / 3
+illegal actions: 0
+evaluation errors: 0
+```
+
+30M common 대비 개선:
+
+```text
+30M common mean: 0.5649
+40M common mean: 0.5976
+absolute improvement: +0.0327
+average extra wins per 5000 games: +163.3
+first-player improvement: +0.0237
+second-player improvement: +0.0416
+```
+
+해석:
+
+- 공통 opponent로 직접 재학습한 효과가 매우 크다.
+- 특히 후공 승률이 `0.5500 -> 0.5916`으로 올라 전체 개선을 주도했다.
+- seed 1과 seed 2는 공통 평가 기준 60%를 통과했으므로 pure PPO 제출
+  후보를 확보했다.
+- 다만 3-seed 평균은 `0.5976`으로 60%에 `0.0024`, 즉 0.24%p 부족하다.
+- seed 0은 `0.5842`로 명확히 낮아 seed 안정성은 아직 완전히 해결되지 않았다.
+
+학습 구간별 episode 승률:
+
+| timestep 구간 | seed 0 | seed 1 | seed 2 |
+| --- | ---: | ---: | ---: |
+| 0~4M | 0.4526 | 0.4574 | 0.4616 |
+| 4~8M | 0.5332 | 0.5432 | 0.5387 |
+| 8~12M | 0.5464 | 0.5624 | 0.5537 |
+| 12~16M | 0.5588 | 0.5691 | 0.5656 |
+| 16~20M | 0.5600 | 0.5770 | 0.5653 |
+| 20~24M | 0.5669 | 0.5781 | 0.5707 |
+| 24~28M | 0.5681 | 0.5815 | 0.5751 |
+| 28~32M | 0.5708 | 0.5854 | 0.5754 |
+| 32~36M | 0.5763 | 0.5939 | 0.5761 |
+| 36~40M | 0.5783 | 0.5916 | 0.5793 |
+
+- 세 seed 모두 후반까지 학습 승률이 상승했다.
+- seed 1은 32~36M 구간이 36~40M보다 높아, 36M checkpoint가 최종 모델보다
+  좋을 가능성이 있다.
+- seed 0과 seed 2는 마지막 구간까지 상승했다.
+- episode 승률은 stochastic training 중 누적 지표이므로 deterministic
+  평가를 대체하지는 않지만 checkpoint 선별 근거로 쓸 수 있다.
+
+소요 시간:
+
+| seed | 학습 시간 | 처리량 |
+| ---: | ---: | ---: |
+| 0 | 3.88h | 2865 ts/s |
+| 1 | 3.91h | 2846 ts/s |
+| 2 | 3.95h | 2815 ts/s |
+
+현재 결론:
+
+- 공통 기준 pure PPO 후보는 확보됐다.
+- 가장 좋은 최종 모델은 seed 1의 `0.6046`이다.
+- 3-seed 평균이 60% 미만이고 seed 0이 실패했으므로 안정성 보강은 필요하다.
+- 다음 commit 단위 작업은 새 학습이 아니라 checkpoint 선별 평가다.
+
+다음 commit 단위 작업:
+
+- `runs/ppo_common_rule_40m_subproc`의 후반 checkpoint를 공통 evaluator로
+  일괄 평가하는 script를 추가한다.
+- 우선 평가 대상은 각 seed의 `32M`, `36M`, `40M`으로 둔다.
+- selection 평가는 기본 공식 seed와 다른 seed 목록으로 1000~2000판을
+  먼저 평가한다.
+- 선별된 후보만 `range:100000:2500` 또는 팀 확정 seed file로 5000판
+  재검증한다.
+- seed 1/2보다 margin이 좋은 checkpoint가 없으면 seed 1 final model을
+  pure PPO 제출 후보로 둔다.
+
 ### Step 15. hybrid evaluation policy 구현
 
-상태: 공통 상대 40M 재학습 결과까지 보류
+상태: common-rule 40M checkpoint 선별 결과까지 보류
 
 구현:
 

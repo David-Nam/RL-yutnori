@@ -131,7 +131,7 @@ illegal actions: 0
 확보했습니다. 다만 전체 seed 평균은 60%에 0.49%p 부족하고 seed 1, 2는
 기준 미달이므로, 안정적인 최종 후보가 확정됐다고 보지는 않습니다.
 
-### Common Paired Evaluation
+### Common Paired Evaluation on 30M Models
 
 이후 팀 공통 평가 가이드를 적용했습니다. 공통 평가는 2,500개 base seed마다
 모델 선공과 후공을 한 번씩 실행해 정확히 2,500판씩, 총 5,000판을
@@ -158,25 +158,49 @@ evaluation errors: 0
 변화로 추가 약 2.29%p가 내려갔습니다. 현재 PPO는 기존 opponent의 말 ID
 선택 패턴에도 적응했으므로 공통 opponent를 상대로 다시 학습해야 합니다.
 
+### Common Rule 40M Retraining
+
+공통 opponent를 직접 학습 상대로 사용해 같은 `tactical + terminal` PPO를
+seed별 40M timesteps로 다시 학습했습니다.
+
+| Seed | 전체 승률 | 선공 승률 | 후공 승률 | Passed | 95% CI |
+| ---: | ---: | ---: | ---: | :---: | --- |
+| 0 | 58.42% | 59.00% | 57.84% | false | 57.05~59.78% |
+| 1 | **60.46%** | 60.76% | 60.16% | true | 59.10~61.81% |
+| 2 | **60.40%** | 61.32% | 59.48% | true | 59.04~61.75% |
+
+```text
+3-seed 평균/pooled 승률: 59.76%
+30M common 대비 개선: +3.27%p
+선공 pooled 승률: 60.36%
+후공 pooled 승률: 59.16%
+60% 통과: 3개 seed 중 2개
+illegal actions: 0
+evaluation errors: 0
+```
+
+40M 재학습으로 공통 평가 기준을 통과하는 pure PPO 후보를 확보했습니다.
+3-seed 평균은 60%에 0.24%p 부족하지만, seed 1과 seed 2는 선공/후공
+분할에서도 균형 있게 개선됐습니다.
+
 자세한 분석은 [팀 회의 보고서](docs/RF_PPO_TEAM_MEETING_REPORT.md)와
 [개발 계획 및 진행 기록](docs/RF_RULE_BASED_PPO_PLAN.md)에서 확인할 수
 있습니다.
 
 ## Current Status
 
-공통 평가에서 기존 30M 모델의 최고 승률은 `57.34%`, 3개 seed 평균은
-`56.49%`였습니다. 기존 기준의 60% 통과 결과는 공통 기준에서는 재현되지
-않았습니다.
+공통 opponent 40M 재학습까지 완료했습니다. 현재 최고 pure PPO 후보는
+seed 1의 `60.46%`이고, seed 2도 `60.40%`로 통과했습니다.
 
 ```text
-현재 판단: 공통 opponent에 맞춘 재학습 필요
-다음 실행: tactical + terminal, common_rule_based, seed별 40M
-후속 판단: 40M 공통 평가 후 checkpoint 탐색 또는 hybrid
+현재 판단: 공통 기준 통과 pure PPO 후보 확보
+다음 검증: 32M, 36M, 40M checkpoint 공통 평가
+후속 판단: margin 확대 실패 시 hybrid 또는 observation 개선
 ```
 
-40M fresh run은 12 CPU worker와 A100을 사용하며 seed 3개를 순차 실행합니다.
-현재 처리량 기준 예상 시간은 약 12시간입니다. 학습 완료 후 공통 paired
-5,000판 평가도 자동으로 실행합니다.
+seed 0은 `58.42%`로 미달했고, 3-seed 평균도 아직 60% 바로 아래입니다.
+따라서 최종 제출 후보는 seed 1 또는 seed 2로 둘 수 있지만, 더 안전한
+margin을 확보하기 위해 저장된 후반 checkpoint를 먼저 비교합니다.
 
 ## Setup
 
@@ -248,7 +272,7 @@ logs/ppo_step14_30m_subproc
 학습 중 CPU worker 상태는 `htop`, GPU 상태는 `nvidia-smi`로 확인할 수
 있습니다.
 
-### Common Rule 40M Training
+### Reproduce Common Rule 40M Training
 
 실행 명령을 먼저 확인합니다.
 
