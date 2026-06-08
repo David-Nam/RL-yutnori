@@ -646,3 +646,36 @@ hybrid 없이도 목표를 달성했다.
 
 이 흐름은 이미 목표를 넘은 pure PPO 후보를 보존하면서, 추가 학습 없이
 통과 margin을 넓힐 수 있는지 먼저 확인하는 전략이다.
+
+## 23. project-RF Agent 공통 환경 교차 평가
+
+팀원의 `project-RF-` 저장소에서 원래 설정으로 학습한
+`ppo_capture_imitation.pt`, `ppo_tactical.pt`를 공통 evaluator에 연결했다.
+학습은 project-RF 환경에서 수행하고, 최종 평가만 우리와 동일한
+`common_rule_based`, paired seed 5000판 조건으로 실행했다.
+
+원본 capture-aware tactical prior는 복제 환경에서 다음 턴의 실제 윷을
+샘플링할 수 있었다. 이는 공통 평가 가이드의 미래 정보 금지 조건과
+충돌하므로, 최종 adapter는 평가 RNG를 복사하지 않고 고정 윷 확률의
+single-roll expected counterplay를 사용한다.
+
+최종 결과:
+
+| model | type | overall | first | second | 95% CI | passed |
+| --- | --- | ---: | ---: | ---: | --- | :---: |
+| ppo_capture_imitation | RL + Rule Hybrid | 0.5946 | 0.6020 | 0.5872 | 0.5809~0.6081 | false |
+| ppo_tactical | RL + Rule Hybrid | 0.5540 | 0.5740 | 0.5340 | 0.5402~0.5677 | false |
+
+두 모델 모두 5000판을 완료했고 illegal action과 evaluation error는 0건이다.
+`ppo_capture_imitation`은 2973승으로 60% 기준에 27승 부족했다.
+
+같은 checkpoint의 network-only 100판 smoke는 0.13이었다. 따라서 팀원
+모델의 높은 원래 tournament 성능은 policy network 단독보다 tactical
+prior에 크게 의존하며, 보고서 모델 유형은 `Pure PPO`가 아니라
+`RL + Rule Hybrid`로 표기해야 한다.
+
+우리 seed 1 pure PPO는 같은 평가에서 0.6046으로, 팀원 최고 모델보다
+1.00%p 높고 엄격한 목표 기준을 통과했다.
+
+상세 구현과 제한사항은
+`docs/PROJECT_RF_CROSS_ENV_EVALUATION.md`에 별도로 정리했다.

@@ -1485,6 +1485,36 @@ second-player improvement: +0.0416
 - seed 1/2보다 margin이 좋은 checkpoint가 없으면 seed 1 final model을
   pure PPO 제출 후보로 둔다.
 
+### Step 14B. project-RF checkpoint 공통 환경 교차 평가
+
+상태: 완료
+
+구현:
+
+- project-RF의 252차원 PyTorch checkpoint를 로드하는 adapter를 추가했다.
+- project-RF와 local action ID를 양방향 변환한다.
+- local `GameState`를 project-RF position one-hot, tactical flag, distance
+  feature로 변환한다.
+- state-based agent도 동일 paired-seed evaluator를 사용할 수 있도록 공통
+  evaluator를 확장했다.
+- 원본 tactical prior의 미래 RNG 접근을 제거하고, 고정 윷 확률에 따른
+  expected counterplay로 대체했다.
+
+검증:
+
+- action mapping, state shape, checkpoint loading, capture prior, RNG 미사용
+  unit test를 추가했다.
+- 두 checkpoint 모두 5000판 완료, illegal action 0, evaluation error 0.
+- `ppo_capture_imitation`: 0.5946
+- `ppo_tactical`: 0.5540
+
+결론:
+
+- 팀원 checkpoint 중 `ppo_capture_imitation`이 가장 강하지만 엄격한 60%
+  기준에는 27승 부족하다.
+- network-only smoke는 0.13으로, 최종 유형은 `RL + Rule Hybrid`다.
+- 상세 기록은 `docs/PROJECT_RF_CROSS_ENV_EVALUATION.md`에 정리했다.
+
 ### Step 15. hybrid evaluation policy 구현
 
 상태: common-rule 40M checkpoint 선별 결과까지 보류

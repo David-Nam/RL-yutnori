@@ -183,6 +183,26 @@ evaluation errors: 0
 3-seed 평균은 60%에 0.24%p 부족하지만, seed 1과 seed 2는 선공/후공
 분할에서도 균형 있게 개선됐습니다.
 
+### project-RF Agent Cross-Environment Evaluation
+
+팀원의 `project-RF-` 환경에서 원래 설정으로 학습한 두 checkpoint를
+adapter로 연결해 같은 공통 paired 5000판 환경에서 평가했습니다.
+
+| Model | 유형 | 전체 승률 | 선공 | 후공 | Passed |
+| --- | --- | ---: | ---: | ---: | :---: |
+| ppo_capture_imitation | RL + Rule Hybrid | **59.46%** | 60.20% | 58.72% | false |
+| ppo_tactical | RL + Rule Hybrid | 55.40% | 57.40% | 53.40% | false |
+
+두 모델 모두 illegal action과 evaluation error는 0건이었습니다.
+`ppo_capture_imitation`은 60% 기준에 27승 부족했습니다. 원래 tactical
+prior는 복제 환경의 다음 윷 결과를 볼 수 있어 공통 가이드와 충돌하므로,
+최종 평가는 실제 RNG를 복사하지 않고 고정 확률의 기대 반격값을 사용하는
+compliant adapter로 실행했습니다.
+
+자세한 내용은
+[project-RF 공통 환경 교차 평가](docs/PROJECT_RF_CROSS_ENV_EVALUATION.md)에
+정리했습니다.
+
 자세한 분석은 [팀 회의 보고서](docs/RF_PPO_TEAM_MEETING_REPORT.md)와
 [개발 계획 및 진행 기록](docs/RF_RULE_BASED_PPO_PLAN.md)에서 확인할 수
 있습니다.
@@ -310,6 +330,7 @@ turn/decision 수, illegal action, evaluation error와 실행 시간이 기록�
 
 - [RF PPO 팀 회의 보고서](docs/RF_PPO_TEAM_MEETING_REPORT.md)
 - [RF 대응 PPO 개발 계획 및 진행 기록](docs/RF_RULE_BASED_PPO_PLAN.md)
+- [project-RF 공통 환경 교차 평가](docs/PROJECT_RF_CROSS_ENV_EVALUATION.md)
 - [윷놀이 규칙](docs/RULES.md)
 - [강화학습 설계](docs/RL_DESIGN.md)
 - [보드 설계](docs/BOARD_DESIGN.md)

@@ -7,6 +7,7 @@ import json
 import time
 from dataclasses import dataclass
 from math import sqrt
+from collections.abc import Callable
 from typing import Protocol, Sequence
 
 import numpy as np
@@ -30,6 +31,14 @@ class CommonMaskablePredictor(Protocol):
         action_masks: np.ndarray | None = None,
     ) -> tuple[np.ndarray, tuple[np.ndarray, ...] | None]:
         ...
+
+
+class CommonStateAgent(Protocol):
+    def select_action(self, state: GameState, legal_actions: list[int]) -> int:
+        ...
+
+
+CommonActionSelector = Callable[[GameState, list[int]], int]
 
 
 @dataclass(frozen=True)
@@ -144,13 +153,64 @@ def evaluate_common_rule_policy(
 ) -> CommonPolicyEvaluationResult:
     """Evaluate both starting positions for every independent base seed."""
 
-    seeds = _validate_base_seeds(base_seeds)
-    if max_decisions <= 0:
-        raise ValueError("max_decisions must be positive")
-
     policy = getattr(model, "policy", None)
     if policy is not None and hasattr(policy, "set_training_mode"):
         policy.set_training_mode(False)
+
+    def select_model_action(state: GameState, legal_actions: list[int]) -> int:
+        observation = encode_observation(
+            state,
+            state.current_player,
+            observation_mode=observation_mode,
+        )
+        action_mask = np.zeros(ACTION_SIZE, dtype=np.bool_)
+        action_mask[legal_actions] = True
+        action, _model_state = model.predict(
+            observation,
+            deterministic=deterministic,
+            action_masks=action_mask,
+        )
+        return int(np.asarray(action).item())
+
+    return _evaluate_common_rule_selector(
+        select_model_action,
+        base_seeds=base_seeds,
+        max_decisions=max_decisions,
+        show_progress=show_progress,
+        progress_desc=progress_desc,
+    )
+
+
+def evaluate_common_rule_agent(
+    agent: CommonStateAgent,
+    *,
+    base_seeds: Sequence[int],
+    max_decisions: int = 10_000,
+    show_progress: bool = False,
+    progress_desc: str = "Common rule agent evaluation",
+) -> CommonPolicyEvaluationResult:
+    """Evaluate a state-based agent with the same paired-seed protocol."""
+
+    return _evaluate_common_rule_selector(
+        agent.select_action,
+        base_seeds=base_seeds,
+        max_decisions=max_decisions,
+        show_progress=show_progress,
+        progress_desc=progress_desc,
+    )
+
+
+def _evaluate_common_rule_selector(
+    select_model_action: CommonActionSelector,
+    *,
+    base_seeds: Sequence[int],
+    max_decisions: int,
+    show_progress: bool,
+    progress_desc: str,
+) -> CommonPolicyEvaluationResult:
+    seeds = _validate_base_seeds(base_seeds)
+    if max_decisions <= 0:
+        raise ValueError("max_decisions must be positive")
 
     first_wins = 0
     first_losses = 0
@@ -181,11 +241,9 @@ def evaluate_common_rule_policy(
     for base_seed, model_starts in game_specs:
         try:
             game = _play_common_game(
-                model,
+                select_model_action,
                 base_seed=base_seed,
                 model_starts=model_starts,
-                observation_mode=observation_mode,
-                deterministic=deterministic,
                 max_decisions=max_decisions,
             )
         except Exception as exc:  # Evaluation errors are reported, not scored.
@@ -281,12 +339,10 @@ def seed_list_sha256(base_seeds: Sequence[int]) -> str:
 
 
 def _play_common_game(
-    model: CommonMaskablePredictor,
+    select_model_action: CommonActionSelector,
     *,
     base_seed: int,
     model_starts: bool,
-    observation_mode: str,
-    deterministic: bool,
     max_decisions: int,
 ) -> _GameResult:
     model_player = 0
@@ -304,23 +360,11 @@ def _play_common_game(
             raise RuntimeError("non-terminal state has no legal actions")
 
         if state.current_player == model_player:
-            observation = encode_observation(
-                state,
-                model_player,
-                observation_mode=observation_mode,
-            )
-            action_mask = np.zeros(ACTION_SIZE, dtype=np.bool_)
-            action_mask[legal_actions] = True
-            action, _model_state = model.predict(
-                observation,
-                deterministic=deterministic,
-                action_masks=action_mask,
-            )
-            action_int = int(np.asarray(action).item())
+            action_int = int(select_model_action(state, legal_actions))
             if (
                 action_int < 0
                 or action_int >= ACTION_SIZE
-                or not action_mask[action_int]
+                or action_int not in legal_actions
             ):
                 return _GameResult(
                     model_won=False,
