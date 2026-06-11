@@ -18,7 +18,6 @@ from yutnori.core import (
     GameState,
     PieceStatus,
     Position,
-    YUT_ORDER,
     YutResult,
     decode_action,
     encode_action,
@@ -29,6 +28,13 @@ from yutnori.core import (
 
 PROJECT_RF_ACTION_SIZE = 20
 PROJECT_RF_STATE_SIZE = 252
+PROJECT_RF_YUT_ORDER = (
+    YutResult.DO,
+    YutResult.GAE,
+    YutResult.GEOL,
+    YutResult.YUT,
+    YutResult.MO,
+)
 PROJECT_RF_START = -1
 PROJECT_RF_FINISH = 99
 PROJECT_RF_POSITION_VALUES = (
@@ -172,6 +178,14 @@ class ProjectRFCheckpointAgent:
             raise ValueError("legal_actions must not be empty")
         if state.current_player not in (0, 1):
             raise ValueError(f"invalid current player: {state.current_player}")
+        if any(
+            decode_action(action)[1] == YutResult.BACK_DO
+            for action in legal_actions
+        ):
+            raise ValueError(
+                "project-RF checkpoint has 20 forward-action logits and is "
+                "incompatible with the full_backdo_v1 ruleset"
+            )
 
         encoded_state = encode_project_rf_state(state)
         state_tensor = torch.as_tensor(
@@ -218,7 +232,7 @@ def encode_project_rf_state(state: GameState) -> np.ndarray:
         encoded[PROJECT_RF_POSITION_INDEX[mapped]] = 1.0
         features.extend(encoded)
 
-    for yut_result in YUT_ORDER:
+    for yut_result in PROJECT_RF_YUT_ORDER:
         features.append(min(state.pool_counts[yut_result], 4) / 4)
 
     features.extend(
@@ -264,7 +278,9 @@ def project_rf_position(position: Position) -> int:
 
 def local_action_to_project_rf(action: int) -> int:
     piece_id, yut_result = decode_action(action)
-    yut_index = YUT_ORDER.index(yut_result)
+    if yut_result == YutResult.BACK_DO:
+        raise ValueError("project-RF checkpoint does not support BACK_DO actions")
+    yut_index = PROJECT_RF_YUT_ORDER.index(yut_result)
     return yut_index * PIECES_PER_PLAYER + piece_id
 
 
@@ -275,7 +291,7 @@ def project_rf_action_to_local(action: int) -> int:
         )
     piece_id = action % PIECES_PER_PLAYER
     yut_index = action // PIECES_PER_PLAYER
-    return encode_action(piece_id, YUT_ORDER[yut_index])
+    return encode_action(piece_id, PROJECT_RF_YUT_ORDER[yut_index])
 
 
 def project_rf_distance_to_finish(position: int) -> int:

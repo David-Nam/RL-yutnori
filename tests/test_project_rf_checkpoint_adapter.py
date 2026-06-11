@@ -22,10 +22,23 @@ from yutnori.core import (
 
 
 def test_project_rf_action_mapping_round_trips_all_local_actions():
-    for local_action in range(20):
-        assert project_rf_action_to_local(
-            local_action_to_project_rf(local_action)
-        ) == local_action
+    for piece_id in range(4):
+        for yut_result in (
+            YutResult.DO,
+            YutResult.GAE,
+            YutResult.GEOL,
+            YutResult.YUT,
+            YutResult.MO,
+        ):
+            local_action = encode_action(piece_id, yut_result)
+            assert project_rf_action_to_local(
+                local_action_to_project_rf(local_action)
+            ) == local_action
+
+
+def test_project_rf_action_mapping_rejects_back_do():
+    with pytest.raises(ValueError, match="BACK_DO"):
+        local_action_to_project_rf(encode_action(0, YutResult.BACK_DO))
 
 
 def test_project_rf_position_projection_covers_local_only_a3_a4_cells():

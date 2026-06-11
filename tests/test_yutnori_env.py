@@ -22,6 +22,7 @@ from yutnori.env import (
     REWARD_MODE_TERMINAL,
     TACTICAL_OBSERVATION_SIZE,
     YutnoriEnv,
+    encode_observation,
     observation_size,
 )
 from yutnori.training import (
@@ -97,6 +98,12 @@ def test_reset_returns_vector_observation_and_mask_for_learner_turn():
 def test_observation_size_rejects_unknown_mode():
     with pytest.raises(ValueError, match="observation_mode"):
         observation_size("unknown")
+
+
+def test_full_backdo_observation_and_action_sizes():
+    assert ACTION_SIZE == 24
+    assert OBSERVATION_SIZE == 62
+    assert TACTICAL_OBSERVATION_SIZE == 302
 
 
 def test_tactical_observation_mode_appends_action_features():
@@ -182,6 +189,34 @@ def test_observation_is_from_learner_perspective():
     assert obs[4:8].tolist() == [0.0] * 4
 
 
+def test_observation_encodes_back_do_pool_count():
+    state = GameState()
+    state.set_pool(YutResult.BACK_DO)
+
+    obs = encode_observation(state, 0)
+
+    assert obs[-1] == 1.0
+
+
+def test_observation_distinguishes_center_entry_routes():
+    state_from_c1 = GameState()
+    state_from_c2 = GameState()
+    state_from_c1.pieces[0][0] = state_from_c1.board.move(
+        Position.at(Route.C1_DIAGONAL, 2),
+        1,
+    ).position
+    state_from_c2.pieces[0][0] = state_from_c2.board.move(
+        Position.at(Route.C2_DIAGONAL, 2),
+        1,
+    ).position
+
+    obs_from_c1 = encode_observation(state_from_c1, 0)
+    obs_from_c2 = encode_observation(state_from_c2, 0)
+
+    assert obs_from_c1[0] == obs_from_c2[0] == float(Cell.CENTER)
+    assert obs_from_c1[8] != obs_from_c2[8]
+
+
 def test_action_masks_respect_stack_representative():
     env = YutnoriEnv(
         starting_player=0,
@@ -245,6 +280,41 @@ def test_reset_auto_advances_opponent_until_learner_turn():
         encode_action(1, YutResult.GEOL),
         encode_action(2, YutResult.GEOL),
         encode_action(3, YutResult.GEOL),
+    ]
+
+
+def test_reset_records_auto_pass_when_back_do_has_no_on_board_piece():
+    env = YutnoriEnv(
+        starting_player=0,
+        opponent_policy=first_legal_action,
+        yut_sampler_factory=sequence_factory(
+            [YutResult.BACK_DO, YutResult.DO, YutResult.GAE]
+        ),
+    )
+
+    _obs, info = env.reset(seed=9)
+
+    assert info["initial_auto_passes"] == [
+        {
+            "player": 0,
+            "rolls": ["BACK_DO"],
+            "pool_counts": {
+                "DO": 0,
+                "GAE": 0,
+                "GEOL": 0,
+                "YUT": 0,
+                "MO": 0,
+                "BACK_DO": 1,
+            },
+            "reason": "NO_LEGAL_ACTION",
+        }
+    ]
+    assert info["current_player"] == 0
+    assert np.flatnonzero(env.action_masks()).tolist() == [
+        encode_action(0, YutResult.GAE),
+        encode_action(1, YutResult.GAE),
+        encode_action(2, YutResult.GAE),
+        encode_action(3, YutResult.GAE),
     ]
 
 

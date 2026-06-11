@@ -94,6 +94,24 @@ def test_tactical_action_features_mark_stack_movement():
     assert row[FEATURE_INDEX["waiting_move"]] == 0.0
 
 
+def test_tactical_action_features_describe_back_do_capture():
+    state = GameState()
+    state.pieces[0][0] = Position.at(Route.OUTER, 3)
+    state.pieces[1][0] = Position.at(Route.OUTER, 2)
+    state.pieces[1][1] = Position.at(Route.OUTER, 2)
+    state.set_pool(YutResult.BACK_DO)
+
+    row = tactical_action_feature_row(
+        state,
+        encode_action(0, YutResult.BACK_DO),
+    )
+
+    assert row[FEATURE_INDEX["legal"]] == 1.0
+    assert row[FEATURE_INDEX["capture"]] == 1.0
+    assert row[FEATURE_INDEX["captured_count"]] == 2.0
+    assert row[FEATURE_INDEX["waiting_move"]] == 0.0
+
+
 def test_tactical_action_features_mark_waiting_piece_move():
     state = GameState()
     state.set_pool(YutResult.DO)

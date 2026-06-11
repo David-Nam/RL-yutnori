@@ -8,16 +8,14 @@ from typing import Iterable
 
 
 class YutResult(str, Enum):
-    """Supported yut results.
-
-    Back-do is intentionally excluded by project rule.
-    """
+    """Supported yut results."""
 
     DO = "DO"
     GAE = "GAE"
     GEOL = "GEOL"
     YUT = "YUT"
     MO = "MO"
+    BACK_DO = "BACK_DO"
 
 
 YUT_ORDER: tuple[YutResult, ...] = (
@@ -26,6 +24,7 @@ YUT_ORDER: tuple[YutResult, ...] = (
     YutResult.GEOL,
     YutResult.YUT,
     YutResult.MO,
+    YutResult.BACK_DO,
 )
 
 YUT_STEPS: dict[YutResult, int] = {
@@ -34,14 +33,16 @@ YUT_STEPS: dict[YutResult, int] = {
     YutResult.GEOL: 3,
     YutResult.YUT: 4,
     YutResult.MO: 5,
+    YutResult.BACK_DO: -1,
 }
 
 YUT_PROBABILITIES: dict[YutResult, float] = {
-    YutResult.DO: 0.1536,
+    YutResult.DO: 0.1152,
     YutResult.GAE: 0.3456,
     YutResult.GEOL: 0.3456,
     YutResult.YUT: 0.1296,
     YutResult.MO: 0.0256,
+    YutResult.BACK_DO: 0.0384,
 }
 
 BONUS_RESULTS: frozenset[YutResult] = frozenset({YutResult.YUT, YutResult.MO})

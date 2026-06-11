@@ -11,6 +11,7 @@ from yutnori.core.yut import YUT_ORDER, YutResult, YutSampler, is_bonus_result, 
 PLAYER_COUNT = 2
 PIECES_PER_PLAYER = 4
 ACTION_SIZE = PIECES_PER_PLAYER * len(YUT_ORDER)
+MAX_CONSECUTIVE_AUTO_PASSES = 10_000
 
 YUT_TO_ACTION_ID: dict[YutResult, int] = {
     result: index for index, result in enumerate(YUT_ORDER)
@@ -44,6 +45,14 @@ def empty_pool() -> dict[YutResult, int]:
 
 
 @dataclass
+class TurnAutoPass:
+    player: int
+    rolls: list[YutResult]
+    pool_counts: dict[YutResult, int]
+    reason: str = "NO_LEGAL_ACTION"
+
+
+@dataclass
 class GameEvent:
     actor: int
     action: int
@@ -60,6 +69,7 @@ class GameEvent:
     landed_on_home: bool = False
     passed_home: bool = False
     bonus_rolls: list[YutResult] = field(default_factory=list)
+    auto_passes: list[TurnAutoPass] = field(default_factory=list)
     turn_changed: bool = False
     winner: int | None = None
     pool_counts: dict[YutResult, int] = field(default_factory=empty_pool)
@@ -88,13 +98,40 @@ class GameState:
         self.winner: int | None = None
         self.turn_count = 0
         self.decision_count = 0
+        self.last_auto_passes: list[TurnAutoPass] = []
+        self.back_do_roll_count = 0
+        self.back_do_action_count = 0
+        self.back_do_capture_count = 0
+        self.back_do_captured_piece_count = 0
+        self.back_do_home_entry_count = 0
+        self.back_do_from_home_count = 0
+        self.no_legal_action_auto_pass_count = 0
 
     def start_turn(self) -> list[YutResult]:
         if self.winner is not None:
             raise ValueError("cannot start a turn after the game is finished")
-        self.pool_counts = empty_pool()
-        self.turn_count += 1
-        return self._roll_until_non_bonus()
+        self.last_auto_passes = []
+        for _attempt in range(MAX_CONSECUTIVE_AUTO_PASSES):
+            self.pool_counts = empty_pool()
+            self.turn_count += 1
+            actor = self.current_player
+            rolls = self._roll_until_non_bonus()
+            if self.get_legal_actions(actor):
+                return rolls
+            self.last_auto_passes.append(
+                TurnAutoPass(
+                    player=actor,
+                    rolls=rolls,
+                    pool_counts=self.pool_counts.copy(),
+                )
+            )
+            self.no_legal_action_auto_pass_count += 1
+            self.pool_counts = empty_pool()
+            self.current_player = 1 - actor
+        raise RuntimeError(
+            "could not produce a playable turn within "
+            f"{MAX_CONSECUTIVE_AUTO_PASSES} auto-passes"
+        )
 
     def get_legal_actions(self, player: int | None = None) -> list[int]:
         target_player = self.current_player if player is None else player
@@ -119,6 +156,11 @@ class GameState:
         position = self.pieces[target_player][piece_id]
         if position.status == PieceStatus.FINISHED:
             return False
+        if (
+            yut_result == YutResult.BACK_DO
+            and position.status != PieceStatus.ON_BOARD
+        ):
+            return False
         return self.stack_representative(target_player, piece_id) == piece_id
 
     def apply_action(self, action: int) -> GameEvent:
@@ -132,8 +174,9 @@ class GameState:
         self.decision_count += 1
 
         moving_piece_ids = self.stack_piece_ids(actor, piece_id)
+        source_position = self.pieces[actor][piece_id]
         move_result = self.board.move(
-            self.pieces[actor][piece_id],
+            source_position,
             steps_for(yut_result),
         )
         for moving_piece_id in moving_piece_ids:
@@ -150,6 +193,19 @@ class GameState:
         if self._all_finished(actor):
             self.winner = actor
 
+        if yut_result == YutResult.BACK_DO:
+            self.back_do_action_count += 1
+            if captured_piece_ids:
+                self.back_do_capture_count += 1
+                self.back_do_captured_piece_count += len(captured_piece_ids)
+            if (
+                source_position.physical_cell == Cell.O1
+                and move_result.position.physical_cell == Cell.HOME
+            ):
+                self.back_do_home_entry_count += 1
+            if source_position.physical_cell == Cell.HOME:
+                self.back_do_from_home_count += 1
+
         bonus_rolls: list[YutResult] = []
         if (
             self.winner is None
@@ -159,6 +215,7 @@ class GameState:
             bonus_rolls = self._roll_until_non_bonus()
 
         turn_changed = False
+        auto_passes: list[TurnAutoPass] = []
         if self.winner is None and (
             self._pool_total() == 0 or len(self.get_legal_actions(actor)) == 0
         ):
@@ -166,6 +223,7 @@ class GameState:
             self.current_player = opponent
             turn_changed = True
             self.start_turn()
+            auto_passes = self.last_auto_passes.copy()
 
         event = GameEvent(
             actor=actor,
@@ -183,6 +241,7 @@ class GameState:
             landed_on_home=move_result.landed_on_home,
             passed_home=move_result.passed_home,
             bonus_rolls=bonus_rolls,
+            auto_passes=auto_passes,
             turn_changed=turn_changed,
             winner=self.winner,
             pool_counts=self.pool_counts.copy(),
@@ -213,12 +272,27 @@ class GameState:
         for result in results:
             self.pool_counts[result] += 1
 
+    def back_do_stats(self) -> dict[str, int]:
+        return {
+            "back_do_roll_count": self.back_do_roll_count,
+            "back_do_action_count": self.back_do_action_count,
+            "back_do_capture_count": self.back_do_capture_count,
+            "back_do_captured_piece_count": self.back_do_captured_piece_count,
+            "back_do_home_entry_count": self.back_do_home_entry_count,
+            "back_do_from_home_count": self.back_do_from_home_count,
+            "no_legal_action_auto_pass_count": (
+                self.no_legal_action_auto_pass_count
+            ),
+        }
+
     def _roll_until_non_bonus(self) -> list[YutResult]:
         rolled: list[YutResult] = []
         while True:
             result = self.yut_sampler.sample()
             rolled.append(result)
             self.pool_counts[result] += 1
+            if result == YutResult.BACK_DO:
+                self.back_do_roll_count += 1
             if not is_bonus_result(result):
                 return rolled
 

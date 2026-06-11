@@ -22,6 +22,7 @@ from yutnori.core import (
     GameState,
     PieceStatus,
     Position,
+    Route,
     YUT_ORDER,
     YutSampler,
 )
@@ -29,10 +30,17 @@ from yutnori.core.game import Sampler
 
 POSITION_WAITING = 29
 POSITION_FINISHED = 30
-OBSERVATION_SIZE = (4 + 4 + 16) * 2 + len(YUT_ORDER)
+TRACK_NONE = 0
+TRACK_OUTER = 1
+TRACK_C1_VIA_C3 = 2
+TRACK_C1_VIA_CENTER_HOME = 3
+TRACK_C2_VIA_CENTER_HOME = 4
+OBSERVATION_SIZE = (4 + 4 + 4 + 16) * 2 + len(YUT_ORDER)
 TACTICAL_OBSERVATION_SIZE = (
     OBSERVATION_SIZE + ACTION_SIZE * TACTICAL_ACTION_FEATURE_SIZE
 )
+RULESET_FULL_BACKDO = "full_backdo_v1"
+RULESET = RULESET_FULL_BACKDO
 OBSERVATION_MODE_BASE = "base"
 OBSERVATION_MODE_TACTICAL = "tactical"
 OBSERVATION_MODES = (OBSERVATION_MODE_BASE, OBSERVATION_MODE_TACTICAL)
@@ -112,6 +120,7 @@ class YutnoriEnv(gym.Env[np.ndarray, int]):
                 yut_sampler=sampler,
             )
             initial_rolls = self.state.start_turn()
+            initial_auto_passes = self.state.last_auto_passes.copy()
             opponent_events = self._advance_opponent_turns()
             if self.state.winner is None:
                 break
@@ -126,6 +135,10 @@ class YutnoriEnv(gym.Env[np.ndarray, int]):
             {
                 "starting_player": starting_player,
                 "initial_rolls": [result.value for result in initial_rolls],
+                "initial_auto_passes": [
+                    self._auto_pass_to_dict(auto_pass)
+                    for auto_pass in initial_auto_passes
+                ],
                 "opponent_events": [self._event_to_dict(event) for event in opponent_events],
                 "skipped_terminal_resets": skipped_terminal_resets,
             }
@@ -253,11 +266,13 @@ class YutnoriEnv(gym.Env[np.ndarray, int]):
         state = self._require_state()
         return {
             "learner_player": self.learner_player,
+            "ruleset": RULESET,
             "reward_mode": self.reward_mode,
             "current_player": state.current_player,
             "winner": state.winner,
             "turn_count": state.turn_count,
             "decision_count": state.decision_count,
+            "back_do_stats": state.back_do_stats(),
             "action_mask": self.action_masks(),
         }
 
@@ -282,12 +297,29 @@ class YutnoriEnv(gym.Env[np.ndarray, int]):
             "entered_shortcut": event.entered_shortcut,
             "landed_on_home": event.landed_on_home,
             "passed_home": event.passed_home,
+            "moved_backward": event.yut_result.value == "BACK_DO",
             "bonus_rolls": [result.value for result in event.bonus_rolls],
+            "auto_passes": [
+                self._auto_pass_to_dict(auto_pass)
+                for auto_pass in event.auto_passes
+            ],
             "turn_changed": event.turn_changed,
             "winner": event.winner,
             "pool_counts": {
                 result.value: count for result, count in event.pool_counts.items()
             },
+        }
+
+    @staticmethod
+    def _auto_pass_to_dict(auto_pass) -> dict[str, Any]:
+        return {
+            "player": auto_pass.player,
+            "rolls": [result.value for result in auto_pass.rolls],
+            "pool_counts": {
+                result.value: count
+                for result, count in auto_pass.pool_counts.items()
+            },
+            "reason": auto_pass.reason,
         }
 
 
@@ -311,9 +343,11 @@ def encode_observation(
     values: list[float] = []
     values.extend(_position_values(state, player))
     values.extend(_status_values(state, player))
+    values.extend(_track_values(state, player))
     values.extend(_stack_matrix_values(state, player))
     values.extend(_position_values(state, opponent))
     values.extend(_status_values(state, opponent))
+    values.extend(_track_values(state, opponent))
     values.extend(_stack_matrix_values(state, opponent))
     values.extend(float(state.pool_counts[result]) for result in YUT_ORDER)
     observation = np.array(values, dtype=np.float32)
@@ -360,6 +394,27 @@ def _status_value(status: PieceStatus) -> int:
     if status == PieceStatus.FINISHED:
         return 2
     raise ValueError(f"unknown piece status: {status}")
+
+
+def _track_values(state: GameState, player: int) -> list[float]:
+    return [float(_track_value(position)) for position in state.pieces[player]]
+
+
+def _track_value(position: Position) -> int:
+    if position.status != PieceStatus.ON_BOARD:
+        return TRACK_NONE
+    if position.route == Route.OUTER:
+        return TRACK_OUTER
+    if position.route == Route.C1_DIAGONAL:
+        return TRACK_C1_VIA_C3
+    if position.route == Route.C2_DIAGONAL:
+        return TRACK_C2_VIA_CENTER_HOME
+    if position.route == Route.CENTER_TO_HOME:
+        if position.entry_route == Route.C1_DIAGONAL:
+            return TRACK_C1_VIA_CENTER_HOME
+        if position.entry_route == Route.C2_DIAGONAL:
+            return TRACK_C2_VIA_CENTER_HOME
+    raise ValueError(f"unknown logical track for position: {position}")
 
 
 def _stack_matrix_values(state: GameState, player: int) -> list[float]:

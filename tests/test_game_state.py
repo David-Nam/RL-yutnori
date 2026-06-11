@@ -1,6 +1,7 @@
 import pytest
 
 from yutnori.core import (
+    ACTION_SIZE,
     Cell,
     GameState,
     PieceStatus,
@@ -34,7 +35,7 @@ def test_action_encoding_round_trips_all_supported_actions():
     with pytest.raises(ValueError):
         encode_action(4, YutResult.DO)
     with pytest.raises(ValueError):
-        decode_action(20)
+        decode_action(ACTION_SIZE)
 
 
 def test_start_turn_rolls_until_non_bonus_result():
@@ -182,3 +183,66 @@ def test_finishing_all_pieces_sets_winner_without_turn_change():
     assert event.winner == 0
     assert state.winner == 0
     assert not event.turn_changed
+
+
+def test_back_do_is_legal_for_on_board_pieces_but_not_waiting_pieces():
+    state = GameState()
+    state.pieces[0][0] = Position.at(Route.OUTER, 3)
+    state.set_pool(YutResult.BACK_DO)
+
+    assert state.get_legal_actions() == [
+        encode_action(0, YutResult.BACK_DO),
+    ]
+    assert not state.is_legal_action(encode_action(1, YutResult.BACK_DO))
+
+
+def test_back_do_moves_stack_and_captures_opponent_stack_with_bonus_roll():
+    sampler = SequenceSampler([YutResult.DO])
+    state = GameState(yut_sampler=sampler)
+    state.pieces[0][0] = Position.at(Route.OUTER, 3)
+    state.pieces[0][1] = Position.at(Route.OUTER, 3)
+    state.pieces[1][0] = Position.at(Route.OUTER, 2)
+    state.pieces[1][1] = Position.at(Route.OUTER, 2)
+    state.set_pool(YutResult.BACK_DO)
+
+    event = state.apply_action(encode_action(0, YutResult.BACK_DO))
+
+    assert event.moved_piece_ids == [0, 1]
+    assert event.captured_piece_ids == [0, 1]
+    assert event.captured_count == 2
+    assert event.bonus_rolls == [YutResult.DO]
+    assert state.pieces[0][0].physical_cell == Cell.O2
+    assert state.pieces[0][1].physical_cell == Cell.O2
+    assert state.pieces[1][0].status == PieceStatus.WAITING
+    assert state.pieces[1][1].status == PieceStatus.WAITING
+    assert state.pool_counts[YutResult.DO] == 1
+    assert state.current_player == 0
+
+
+def test_back_do_from_o1_can_capture_opponent_on_home():
+    sampler = SequenceSampler([YutResult.DO])
+    state = GameState(yut_sampler=sampler)
+    state.pieces[0][0] = Position.at(Route.OUTER, 1)
+    state.pieces[1][0] = Position.home(Route.OUTER)
+    state.set_pool(YutResult.BACK_DO)
+
+    event = state.apply_action(encode_action(0, YutResult.BACK_DO))
+
+    assert event.captured_count == 1
+    assert state.pieces[0][0].physical_cell == Cell.HOME
+    assert state.pieces[1][0].status == PieceStatus.WAITING
+
+
+def test_start_turn_auto_passes_back_do_when_all_pieces_are_waiting():
+    sampler = SequenceSampler([YutResult.BACK_DO, YutResult.DO])
+    state = GameState(starting_player=0, yut_sampler=sampler)
+
+    rolls = state.start_turn()
+
+    assert rolls == [YutResult.DO]
+    assert state.current_player == 1
+    assert state.turn_count == 2
+    assert state.pool_counts[YutResult.DO] == 1
+    assert len(state.last_auto_passes) == 1
+    assert state.last_auto_passes[0].player == 0
+    assert state.last_auto_passes[0].rolls == [YutResult.BACK_DO]
