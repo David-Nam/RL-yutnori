@@ -337,6 +337,30 @@ logs/ppo_common_rule_50m_backdo_subproc
 seed 목록 SHA-256, 전체·선공·후공 승률, Wilson 95% 신뢰구간, 평균
 turn/decision 수, illegal action, evaluation error와 실행 시간이 기록됩니다.
 
+### Legacy 40M vs project-RF 직접 대전
+
+뒷도가 없는 20-action 규칙에서 학습한 40M PPO와 project-RF checkpoint를
+직접 대전시키려면 다음 명령을 사용합니다. 현재 `full_backdo_v1` 코어 위에서
+forward-only sampler와 legacy observation/action adapter를 사용하므로 두
+checkpoint의 원래 입력·출력 shape를 유지합니다.
+
+```bash
+.venv/bin/python scripts/evaluate_legacy_head_to_head.py \
+  --rl-model-path bests/ppo_common_rule_40m_subproc/common_rule_based_seed_1_40m_nenv12_tactical/model.zip \
+  --project-rf-model-path ../project-RF-/local_artifacts/results/ppo_training/ppo_capture_imitation.pt \
+  --seed-start 200000 \
+  --seed-count 2500 \
+  --device cpu \
+  --output-dir runs/legacy_head_to_head_40m_vs_project_rf
+```
+
+각 base seed마다 두 모델의 선공과 후공을 바꿔 총 5,000판을 실행합니다.
+`summary.json`, `games.csv`, `report.md`에 전체·선공·후공 승률, Wilson 95%
+신뢰구간, paired seed 결과, 평균 잡기·완주 수, illegal action과 평가 오류가
+저장됩니다. project-RF tactical prior는 평가 RNG를 복사하지 않는 compliant
+기대값 방식이며, `--project-rf-network-only`로 보조 network-only 평가를
+분리할 수 있습니다.
+
 ## Documentation
 
 - [RF PPO 팀 회의 보고서](docs/RF_PPO_TEAM_MEETING_REPORT.md)
