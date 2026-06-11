@@ -29,7 +29,13 @@ from stable_baselines3.common.callbacks import (  # noqa: E402
 )
 from tqdm.auto import tqdm  # noqa: E402
 
-from yutnori.env import OBSERVATION_MODES, REWARD_MODES  # noqa: E402
+from yutnori.core import ACTION_SIZE  # noqa: E402
+from yutnori.env import (  # noqa: E402
+    OBSERVATION_MODES,
+    REWARD_MODES,
+    RULESET,
+    observation_size,
+)
 from yutnori.training import (  # noqa: E402
     OPPONENT_NAMES,
     VEC_ENV_TYPES,
@@ -151,6 +157,9 @@ def main() -> None:
             "started_at": config["started_at"],
             "finished_at": datetime.now(UTC).isoformat(),
             "checkpoint_dir": config["checkpoint_dir"],
+            "ruleset": RULESET,
+            "action_size": ACTION_SIZE,
+            "observation_size": observation_size(args.observation_mode),
             "observation_mode": args.observation_mode,
             "reward_mode": args.reward_mode,
             "target_total_timesteps": args.total_timesteps,
@@ -422,6 +431,7 @@ class EpisodeStatsCallback(BaseCallback):
         self._max_turns = 0
         self._max_learner_timesteps = 0
         self._last_completed_episode_timestep = 0
+        self._back_do_stats: dict[str, int] = {}
 
     def _on_training_start(self) -> None:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -463,6 +473,8 @@ class EpisodeStatsCallback(BaseCallback):
             self._max_learner_timesteps,
             learner_decisions,
         )
+        for name, count in info["back_do_stats"].items():
+            self._back_do_stats[name] = self._back_do_stats.get(name, 0) + int(count)
 
         payload = {
             "completed_episodes": self._completed_episodes,
@@ -474,6 +486,7 @@ class EpisodeStatsCallback(BaseCallback):
             "learner_decisions": learner_decisions,
             "turn_count": turn_count,
             "decision_count": decision_count,
+            "back_do_stats": info["back_do_stats"],
         }
         with self.output_path.open("a") as file:
             file.write(json.dumps(payload, sort_keys=True) + "\n")
@@ -494,6 +507,7 @@ class EpisodeStatsCallback(BaseCallback):
                 "max_decisions": 0,
                 "episodes_per_100k_timesteps": 0.0,
                 "last_completed_episode_timestep": 0,
+                "back_do_stats": {},
             }
         return {
             "completed_episodes": self._completed_episodes,
@@ -513,6 +527,7 @@ class EpisodeStatsCallback(BaseCallback):
                 else self._completed_episodes / trained_timesteps * 100_000
             ),
             "last_completed_episode_timestep": self._last_completed_episode_timestep,
+            "back_do_stats": self._back_do_stats.copy(),
         }
 
 
@@ -616,6 +631,9 @@ def _config_dict(args: argparse.Namespace, run_dir: Path) -> dict[str, Any]:
         "git_commit": _git_commit(),
         "started_at": datetime.now(UTC).isoformat(),
         "seed": args.seed,
+        "ruleset": RULESET,
+        "action_size": ACTION_SIZE,
+        "observation_size": observation_size(args.observation_mode),
         "opponent": args.opponent,
         "observation_mode": args.observation_mode,
         "reward_mode": args.reward_mode,
@@ -704,6 +722,7 @@ def _episode_stats_summary(
             "max_decisions": 0,
             "episodes_per_100k_timesteps": 0.0,
             "last_completed_episode_timestep": 0,
+            "back_do_stats": {},
         }
 
     completed = 0
@@ -715,6 +734,7 @@ def _episode_stats_summary(
     max_decisions = 0
     max_learner_timesteps = 0
     final_timesteps = 0
+    back_do_stats: dict[str, int] = {}
     for line in path.read_text().splitlines():
         if not line:
             continue
@@ -731,6 +751,8 @@ def _episode_stats_summary(
         max_decisions = max(max_decisions, decision_count)
         max_learner_timesteps = max(max_learner_timesteps, learner_timesteps)
         final_timesteps = max(final_timesteps, int(item["timesteps"]))
+        for name, count in item.get("back_do_stats", {}).items():
+            back_do_stats[name] = back_do_stats.get(name, 0) + int(count)
 
     if completed == 0:
         return {
@@ -745,6 +767,7 @@ def _episode_stats_summary(
             "max_decisions": 0,
             "episodes_per_100k_timesteps": 0.0,
             "last_completed_episode_timestep": 0,
+            "back_do_stats": {},
         }
 
     return {
@@ -763,6 +786,7 @@ def _episode_stats_summary(
             else completed / trained_timesteps * 100_000
         ),
         "last_completed_episode_timestep": final_timesteps,
+        "back_do_stats": back_do_stats,
     }
 
 

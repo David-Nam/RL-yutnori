@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 import numpy as np
@@ -36,6 +36,7 @@ class PolicyEvaluationResult:
     average_decisions: float
     illegal_action_count: int
     starting_player_counts: dict[int, int]
+    back_do_stats: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -52,6 +53,7 @@ class PolicyEvaluationResult:
                 str(player): count
                 for player, count in sorted(self.starting_player_counts.items())
             },
+            "back_do_stats": self.back_do_stats,
         }
 
 
@@ -88,6 +90,7 @@ def evaluate_maskable_policy(
     total_decisions = 0
     illegal_action_count = 0
     starting_player_counts = {0: 0, 1: 0}
+    back_do_stats: dict[str, int] = {}
 
     try:
         episode_iter = range(episodes)
@@ -136,6 +139,8 @@ def evaluate_maskable_policy(
                 wins += 1
             total_turns += int(info["turn_count"])
             total_decisions += int(info["decision_count"])
+            for name, count in info["back_do_stats"].items():
+                back_do_stats[name] = back_do_stats.get(name, 0) + int(count)
 
             if show_progress and hasattr(episode_iter, "set_postfix"):
                 completed = episode + 1
@@ -161,4 +166,5 @@ def evaluate_maskable_policy(
         average_decisions=0.0 if episodes == 0 else total_decisions / episodes,
         illegal_action_count=illegal_action_count,
         starting_player_counts=starting_player_counts,
+        back_do_stats=back_do_stats,
     )

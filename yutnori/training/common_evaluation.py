@@ -15,9 +15,9 @@ from tqdm.auto import tqdm
 
 from yutnori.agents import CommonRuleBasedAgent
 from yutnori.core import ACTION_SIZE, GameState, YutSampler
-from yutnori.env import OBSERVATION_MODE_BASE, encode_observation
+from yutnori.env import OBSERVATION_MODE_BASE, RULESET, encode_observation
 
-COMMON_EVALUATION_PROTOCOL = "common_rule_based_paired_v1"
+COMMON_EVALUATION_PROTOCOL = "common_rule_based_paired_full_backdo_v1"
 COMMON_RULE_OPPONENT = "common_rule_based"
 
 
@@ -89,6 +89,7 @@ class CommonPolicyEvaluationResult:
     illegal_action_count: int
     evaluation_errors: tuple[CommonEvaluationError, ...]
     elapsed_seconds: float
+    back_do_stats: dict[str, int]
 
     @property
     def evaluation_error_count(self) -> int:
@@ -101,6 +102,7 @@ class CommonPolicyEvaluationResult:
     def to_dict(self) -> dict[str, object]:
         return {
             "protocol": COMMON_EVALUATION_PROTOCOL,
+            "ruleset": RULESET,
             "opponent": COMMON_RULE_OPPONENT,
             "base_seed_count": len(self.base_seeds),
             "base_seed_sha256": self.seed_sha256,
@@ -125,6 +127,7 @@ class CommonPolicyEvaluationResult:
                 for evaluation_error in self.evaluation_errors
             ],
             "elapsed_seconds": self.elapsed_seconds,
+            "back_do_stats": self.back_do_stats,
             "average_game_seconds": (
                 0.0
                 if self.scheduled_games == 0
@@ -139,6 +142,7 @@ class _GameResult:
     turns: int
     decisions: int
     illegal_action: bool = False
+    back_do_stats: dict[str, int] | None = None
 
 
 def evaluate_common_rule_policy(
@@ -221,6 +225,7 @@ def _evaluate_common_rule_selector(
     illegal_action_count = 0
     errors: list[CommonEvaluationError] = []
     completed_games = 0
+    back_do_stats: dict[str, int] = {}
     started_at = time.perf_counter()
 
     game_specs = (
@@ -261,6 +266,8 @@ def _evaluate_common_rule_selector(
         total_turns += game.turns
         total_decisions += game.decisions
         illegal_action_count += int(game.illegal_action)
+        for name, count in (game.back_do_stats or {}).items():
+            back_do_stats[name] = back_do_stats.get(name, 0) + int(count)
         if model_starts:
             first_wins += int(game.model_won)
             first_losses += int(not game.model_won)
@@ -304,6 +311,7 @@ def _evaluate_common_rule_selector(
         illegal_action_count=illegal_action_count,
         evaluation_errors=tuple(errors),
         elapsed_seconds=elapsed_seconds,
+        back_do_stats=back_do_stats,
     )
 
 
@@ -371,6 +379,7 @@ def _play_common_game(
                     turns=state.turn_count,
                     decisions=state.decision_count,
                     illegal_action=True,
+                    back_do_stats=state.back_do_stats(),
                 )
         else:
             action_int = rule_agent.select_action(state, legal_actions)
@@ -385,6 +394,7 @@ def _play_common_game(
         model_won=state.winner == model_player,
         turns=state.turn_count,
         decisions=state.decision_count,
+        back_do_stats=state.back_do_stats(),
     )
 
 

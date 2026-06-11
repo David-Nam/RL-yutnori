@@ -19,12 +19,19 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from sb3_contrib import MaskablePPO  # noqa: E402
 
-from yutnori.env import OBSERVATION_MODES, REWARD_MODES  # noqa: E402
+from yutnori.core import ACTION_SIZE  # noqa: E402
+from yutnori.env import (  # noqa: E402
+    OBSERVATION_MODES,
+    REWARD_MODES,
+    RULESET,
+    observation_size,
+)
 from yutnori.training import (  # noqa: E402
     PolicyEvaluationResult,
     evaluate_maskable_policy,
     resolve_model_observation_mode,
     resolve_model_reward_mode,
+    resolve_model_ruleset,
 )
 
 TARGET_OPPONENT = "project_rf_rule"
@@ -53,6 +60,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     _validate_args(args)
 
+    ruleset = resolve_model_ruleset(args.model_path)
     observation_mode = resolve_model_observation_mode(
         args.model_path,
         args.observation_mode,
@@ -81,6 +89,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         observation_mode=observation_mode,
         reward_mode=reward_mode,
         pass_threshold=args.pass_threshold,
+        ruleset=ruleset,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -95,11 +104,15 @@ def build_payload(
     observation_mode: str,
     reward_mode: str,
     pass_threshold: float = DEFAULT_PASS_THRESHOLD,
+    ruleset: str = RULESET,
 ) -> dict[str, Any]:
     return {
         "model_path": str(model_path),
         "evaluated_at": datetime.now(UTC).isoformat(),
         "deterministic": deterministic,
+        "ruleset": ruleset,
+        "action_size": ACTION_SIZE,
+        "observation_size": observation_size(observation_mode),
         "observation_mode": observation_mode,
         "reward_mode": reward_mode,
         "target_opponent": TARGET_OPPONENT,

@@ -23,6 +23,7 @@ from yutnori.training.env_factory import (
 from yutnori.training.model_config import (
     resolve_model_observation_mode,
     resolve_model_reward_mode,
+    resolve_model_ruleset,
 )
 from yutnori.training.ppo_evaluation import (
     PolicyEvaluationResult,
@@ -60,6 +61,7 @@ __all__ = [
     "project_rf_events_shaping_reward",
     "resolve_model_observation_mode",
     "resolve_model_reward_mode",
+    "resolve_model_ruleset",
     "seed_list_sha256",
     "wilson_interval",
 ]

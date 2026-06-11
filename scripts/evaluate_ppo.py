@@ -18,12 +18,18 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from sb3_contrib import MaskablePPO  # noqa: E402
 
-from yutnori.env import OBSERVATION_MODES, REWARD_MODES  # noqa: E402
+from yutnori.core import ACTION_SIZE  # noqa: E402
+from yutnori.env import (  # noqa: E402
+    OBSERVATION_MODES,
+    REWARD_MODES,
+    observation_size,
+)
 from yutnori.training import (  # noqa: E402
     OPPONENT_NAMES,
     evaluate_maskable_policy,
     resolve_model_observation_mode,
     resolve_model_reward_mode,
+    resolve_model_ruleset,
 )
 
 
@@ -50,6 +56,7 @@ def main() -> None:
     if args.max_decisions <= 0:
         raise ValueError("max_decisions must be positive")
 
+    ruleset = resolve_model_ruleset(args.model_path)
     observation_mode = resolve_model_observation_mode(
         args.model_path,
         args.observation_mode,
@@ -75,6 +82,9 @@ def main() -> None:
         "model_path": str(args.model_path),
         "evaluated_at": datetime.now(UTC).isoformat(),
         "deterministic": not args.stochastic,
+        "ruleset": ruleset,
+        "action_size": ACTION_SIZE,
+        "observation_size": observation_size(observation_mode),
         "observation_mode": observation_mode,
         "reward_mode": reward_mode,
         **result.to_dict(),

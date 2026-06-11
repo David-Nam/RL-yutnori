@@ -10,7 +10,10 @@ from yutnori.env import (
     OBSERVATION_MODES,
     REWARD_MODE_TERMINAL,
     REWARD_MODES,
+    RULESET,
 )
+
+LEGACY_RULESET = "legacy_no_backdo_v1"
 
 
 def resolve_model_observation_mode(
@@ -57,6 +60,25 @@ def resolve_model_reward_mode(
         reward_mode,
         source=f"{model_path.parent / 'config.json'} reward_mode",
     )
+
+
+def resolve_model_ruleset(model_path: Path) -> str:
+    """Require a saved model to match the active environment ruleset."""
+
+    config = _read_model_config(model_path)
+    if config is None:
+        raise ValueError(
+            f"missing config.json beside {model_path}; cannot verify ruleset "
+            f"compatibility with {RULESET}"
+        )
+
+    ruleset = config.get("ruleset", LEGACY_RULESET)
+    if ruleset != RULESET:
+        raise ValueError(
+            f"{model_path.parent / 'config.json'} ruleset={ruleset!r} is "
+            f"incompatible with active ruleset={RULESET!r}"
+        )
+    return RULESET
 
 
 def _validate_observation_mode(observation_mode: object, *, source: str) -> str:

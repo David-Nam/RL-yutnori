@@ -19,12 +19,19 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from sb3_contrib import MaskablePPO  # noqa: E402
 
-from yutnori.env import OBSERVATION_MODES, REWARD_MODES  # noqa: E402
+from yutnori.core import ACTION_SIZE  # noqa: E402
+from yutnori.env import (  # noqa: E402
+    OBSERVATION_MODES,
+    REWARD_MODES,
+    RULESET,
+    observation_size,
+)
 from yutnori.training import (  # noqa: E402
     CommonPolicyEvaluationResult,
     evaluate_common_rule_policy,
     resolve_model_observation_mode,
     resolve_model_reward_mode,
+    resolve_model_ruleset,
 )
 
 DEFAULT_BASE_SEED_START = 100_000
@@ -59,6 +66,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         seed_start=args.seed_start,
         seed_count=args.seed_count,
     )
+    ruleset = resolve_model_ruleset(args.model_path)
     observation_mode = resolve_model_observation_mode(
         args.model_path,
         args.observation_mode,
@@ -90,6 +98,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             if args.seed_file is not None
             else f"range:{args.seed_start}:{args.seed_count}"
         ),
+        ruleset=ruleset,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -125,6 +134,7 @@ def build_payload(
     training_seed: int | None,
     model_type: str,
     seed_source: str,
+    ruleset: str = RULESET,
 ) -> dict[str, Any]:
     valid_official_result = (
         result.completed_games == result.scheduled_games
@@ -136,6 +146,9 @@ def build_payload(
         "training_seed": training_seed,
         "evaluated_at": datetime.now(UTC).isoformat(),
         "deterministic": deterministic,
+        "ruleset": ruleset,
+        "action_size": ACTION_SIZE,
+        "observation_size": observation_size(observation_mode),
         "observation_mode": observation_mode,
         "training_reward_mode": reward_mode,
         "seed_source": seed_source,

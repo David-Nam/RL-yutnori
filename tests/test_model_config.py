@@ -2,7 +2,12 @@ import json
 
 import pytest
 
-from yutnori.training import resolve_model_observation_mode, resolve_model_reward_mode
+from yutnori.env import RULESET
+from yutnori.training import (
+    resolve_model_observation_mode,
+    resolve_model_reward_mode,
+    resolve_model_ruleset,
+)
 
 
 def test_resolve_model_observation_mode_prefers_explicit_value(tmp_path):
@@ -76,3 +81,27 @@ def test_resolve_model_reward_mode_rejects_invalid_config_value(tmp_path):
 
     with pytest.raises(ValueError, match="reward_mode"):
         resolve_model_reward_mode(model_path)
+
+
+def test_resolve_model_ruleset_accepts_full_backdo_config(tmp_path):
+    model_path = tmp_path / "model.zip"
+    (tmp_path / "config.json").write_text(
+        json.dumps({"ruleset": RULESET}),
+    )
+
+    assert resolve_model_ruleset(model_path) == RULESET
+
+
+def test_resolve_model_ruleset_rejects_legacy_config(tmp_path):
+    model_path = tmp_path / "model.zip"
+    (tmp_path / "config.json").write_text(
+        json.dumps({"observation_mode": "tactical"}),
+    )
+
+    with pytest.raises(ValueError, match="incompatible"):
+        resolve_model_ruleset(model_path)
+
+
+def test_resolve_model_ruleset_requires_config(tmp_path):
+    with pytest.raises(ValueError, match="missing config"):
+        resolve_model_ruleset(tmp_path / "model.zip")
