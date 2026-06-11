@@ -292,22 +292,33 @@ logs/ppo_step14_30m_subproc
 학습 중 CPU worker 상태는 `htop`, GPU 상태는 `nvidia-smi`로 확인할 수
 있습니다.
 
-### Reproduce Common Rule 40M Training
+### Legacy Common Rule 40M Training
 
-실행 명령을 먼저 확인합니다.
+아래 40M 결과는 뒷도가 없던 이전 ruleset의 기록입니다. 현재
+`full_backdo_v1` 코드에서는 기존 checkpoint와 호환되지 않으며, 새 학습에는
+다음 절의 50M 전용 스크립트를 사용합니다.
 
 ```bash
 scripts/run_common_rule_40m_training.sh --dry-run
 ```
 
-실제 40M 학습과 공통 평가를 순차 실행합니다.
+### Full-Backdo 50M Training
+
+전체 보드 뒷도와 역방향 잡기가 포함된 `full_backdo_v1` 환경은 기존
+40M checkpoint와 action/observation shape가 다르므로 fresh training합니다.
 
 ```bash
-scripts/run_common_rule_40m_training.sh
+scripts/run_common_rule_50m_backdo_training.sh --dry-run
+scripts/run_common_rule_50m_backdo_training.sh
 ```
 
-기본 설정은 `common_rule_based`, `tactical + terminal`, seed `0, 1, 2`,
-seed별 40M, `n_envs=12`, `SubprocVecEnv`, CUDA입니다.
+기본 설정은 seed별 50M, `tactical + terminal`, `n_envs=32`,
+`SubprocVecEnv`, CUDA, 5M checkpoint 간격이며 결과는 다음 위치에 저장됩니다.
+
+```text
+runs/ppo_common_rule_50m_backdo_subproc
+logs/ppo_common_rule_50m_backdo_subproc
+```
 
 ## Evaluation
 
@@ -334,3 +345,4 @@ turn/decision 수, illegal action, evaluation error와 실행 시간이 기록�
 - [윷놀이 규칙](docs/RULES.md)
 - [강화학습 설계](docs/RL_DESIGN.md)
 - [보드 설계](docs/BOARD_DESIGN.md)
+- [전체 뒷도 50M 구현 계획](docs/FULL_BACKDO_50M_IMPLEMENTATION_PLAN.md)

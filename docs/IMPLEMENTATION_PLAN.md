@@ -60,7 +60,7 @@
 
 ### M4. Gymnasium 환경 Wrapper
 
-- `action_space = Discrete(20)`.
+- `action_space = Discrete(24)`.
 - vector observation 반환.
 - `action_masks()` 제공.
 - learner action 이후 opponent 턴은 env 내부에서 자동 진행해 learner의 다음 decision state 반환.
@@ -94,7 +94,7 @@
 ### M7. C51 학습
 
 - CleanRL C51 구조를 참고해 프로젝트 env에 맞게 학습 스크립트 작성.
-- 출력 shape `(batch, 20, 51)`, support `[-1, 1]`.
+- 출력 shape `(batch, 24, 51)`, support `[-1, 1]`.
 - action 선택과 target action 계산 모두 mask 적용.
 - 검증:
   - replay buffer, target network, categorical projection 단위 테스트.
@@ -116,13 +116,13 @@
 
 - `reset(seed=None) -> (obs, info)`
 - `step(action) -> (obs, reward, terminated, truncated, info)`
-- `action_masks() -> np.ndarray[bool]` shape `(20,)`
+- `action_masks() -> np.ndarray[bool]` shape `(24,)`
 
 ### Action
 
-- `action = piece_id * 5 + yut_type_id`
+- `action = piece_id * 6 + yut_type_id`
 - `piece_id: 0..3`
-- `yut_type_id: DO, GAE, GEOL, YUT, MO`
+- `yut_type_id: DO, GAE, GEOL, YUT, MO, BACK_DO`
 
 ### Reward
 

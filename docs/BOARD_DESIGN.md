@@ -9,7 +9,7 @@
 - 이동 경로와 다음 방향은 `logical route position`으로 표현한다.
 - 잡기와 업기는 같은 `physical cell`에 도착했는지로 판정한다.
 - 지름길 진입은 플레이어 선택 없이 자동 처리한다.
-- 뒷도와 후진은 사용하지 않는다.
+- 뒷도는 현재 logical route를 기준으로 한 칸 역방향 이동한다.
 
 ## 2. Physical Cell
 
@@ -91,6 +91,10 @@ CENTER_TO_HOME:
 CENTER, B3, B4, HOME
 ```
 
+`CENTER_TO_HOME` position은 `entry_route`로 C1 또는 C2 진입 방향을 함께
+보존한다. HOME position도 도착 route와 마지막 index를 유지한다. 이 문맥은
+같은 physical cell인 CENTER와 HOME에서 뒷도 목적지를 결정하는 데 사용한다.
+
 ## 4. 자동 지름길 규칙
 
 - `OUTER` 경로에서 `C1`에 정확히 멈추면 다음 이동부터 `C1_DIAGONAL`을 따른다.
@@ -120,7 +124,16 @@ O19 + GAE(2) -> FINISHED
 HOME(ON_BOARD) + DO/GAE/GEOL/YUT/MO -> FINISHED
 ```
 
-## 6. Board.move 입력/출력
+## 6. 뒷도
+
+- `Board.move(position, -1)`은 현재 route의 직전 칸으로 이동한다.
+- `O1 -> HOME`, 외곽 HOME `-> O19`, 중앙 귀환 HOME `-> B4`다.
+- C1 경유 CENTER `-> A2`, C2 경유 CENTER `-> B2`다.
+- C1 지름길 C3 `-> A4`, 외곽 C3 `-> O14`다.
+- `WAITING` 말의 뒷도와 `FINISHED` 말의 이동은 허용하지 않는다.
+- 잡기와 업기는 이동 방향과 무관하게 목적 physical cell에서 판정한다.
+
+## 7. Board.move 입력/출력
 
 입력:
 
@@ -135,6 +148,7 @@ status: WAITING | ON_BOARD | FINISHED
 route: OUTER | C1_DIAGONAL | C2_DIAGONAL | CENTER_TO_HOME | None
 index: int | None
 physical_cell: int | None
+entry_route: C1_DIAGONAL | C2_DIAGONAL | None
 ```
 
 `MoveResult`:
@@ -147,9 +161,10 @@ physical_cell: int | None
 entered_shortcut: bool
 landed_on_home: bool
 passed_home: bool
+moved_backward: bool
 ```
 
-## 7. 확정 사항
+## 8. 확정 사항
 
 - 29칸 physical cell 명세를 그대로 사용한다.
 - `CENTER`에 정확히 멈춘 말은 항상 `CENTER_TO_HOME`으로 간다.
