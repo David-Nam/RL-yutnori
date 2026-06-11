@@ -113,6 +113,7 @@ class Position:
     route: Route | None = None
     index: int | None = None
     physical_cell: Cell | None = None
+    entry_route: Route | None = None
 
     @classmethod
     def waiting(cls) -> "Position":
@@ -123,24 +124,47 @@ class Position:
         return cls(status=PieceStatus.FINISHED)
 
     @classmethod
-    def home(cls) -> "Position":
+    def home(
+        cls,
+        route: Route = Route.OUTER,
+        *,
+        entry_route: Route | None = None,
+    ) -> "Position":
+        if route == Route.CENTER_TO_HOME:
+            _validate_center_entry_route(entry_route)
+        elif entry_route is not None:
+            raise ValueError("entry_route is only valid for CENTER_TO_HOME")
         return cls(
             status=PieceStatus.ON_BOARD,
-            route=Route.OUTER,
-            index=0,
+            route=route,
+            index=len(ROUTES[route]) - 1,
             physical_cell=Cell.HOME,
+            entry_route=entry_route,
         )
 
     @classmethod
-    def at(cls, route: Route, index: int) -> "Position":
+    def at(
+        cls,
+        route: Route,
+        index: int,
+        *,
+        entry_route: Route | None = None,
+    ) -> "Position":
         cells = ROUTES[route]
         if index < 0 or index >= len(cells):
             raise ValueError(f"invalid index {index} for route {route.value}")
+        if cells[index] == Cell.HOME:
+            return cls.home(route, entry_route=entry_route)
+        if route == Route.CENTER_TO_HOME:
+            _validate_center_entry_route(entry_route)
+        elif entry_route is not None:
+            raise ValueError("entry_route is only valid for CENTER_TO_HOME")
         return cls(
             status=PieceStatus.ON_BOARD,
             route=route,
             index=index,
             physical_cell=cells[index],
+            entry_route=entry_route,
         )
 
 
@@ -150,6 +174,7 @@ class MoveResult:
     entered_shortcut: bool = False
     landed_on_home: bool = False
     passed_home: bool = False
+    moved_backward: bool = False
 
     @property
     def status(self) -> PieceStatus:
@@ -172,21 +197,37 @@ class Board:
     """Move pieces on the confirmed 29-cell board."""
 
     def move(self, position: Position, steps: int) -> MoveResult:
-        if steps <= 0:
-            raise ValueError("steps must be positive")
+        if steps == 0 or steps < -1:
+            raise ValueError("steps must be -1 or a positive integer")
         if position.status == PieceStatus.FINISHED:
             raise ValueError("finished pieces cannot move")
         if position.status == PieceStatus.WAITING:
+            if steps < 0:
+                raise ValueError("waiting pieces cannot move backward")
             return self._move_from(Route.OUTER, 0, steps)
         if position.status != PieceStatus.ON_BOARD:
             raise ValueError(f"unknown piece status: {position.status}")
+        if steps == -1:
+            return self._move_backward_one(position)
         if position.physical_cell == Cell.HOME:
             return MoveResult(position=Position.finished(), passed_home=True)
         if position.route is None or position.index is None:
             raise ValueError("on-board position requires route and index")
-        return self._move_from(position.route, position.index, steps)
+        return self._move_from(
+            position.route,
+            position.index,
+            steps,
+            entry_route=position.entry_route,
+        )
 
-    def _move_from(self, route: Route, index: int, steps: int) -> MoveResult:
+    def _move_from(
+        self,
+        route: Route,
+        index: int,
+        steps: int,
+        *,
+        entry_route: Route | None = None,
+    ) -> MoveResult:
         route_cells = ROUTES[route]
         target_index = index + steps
         home_index = len(route_cells) - 1
@@ -196,7 +237,10 @@ class Board:
 
         target_cell = route_cells[target_index]
         if target_index == home_index and target_cell == Cell.HOME:
-            return MoveResult(position=Position.home(), landed_on_home=True)
+            return MoveResult(
+                position=Position.home(route, entry_route=entry_route),
+                landed_on_home=True,
+            )
 
         new_route = route
         new_index = target_index
@@ -205,17 +249,73 @@ class Board:
         if route == Route.OUTER and target_cell == Cell.C1:
             new_route = Route.C1_DIAGONAL
             new_index = 0
+            entry_route = None
             entered_shortcut = True
         elif route == Route.OUTER and target_cell == Cell.C2:
             new_route = Route.C2_DIAGONAL
             new_index = 0
+            entry_route = None
             entered_shortcut = True
         elif target_cell == Cell.CENTER:
+            entry_route = route
             new_route = Route.CENTER_TO_HOME
             new_index = 0
             entered_shortcut = True
 
         return MoveResult(
-            position=Position.at(new_route, new_index),
+            position=Position.at(
+                new_route,
+                new_index,
+                entry_route=entry_route,
+            ),
             entered_shortcut=entered_shortcut,
+        )
+
+    def _move_backward_one(self, position: Position) -> MoveResult:
+        if position.route is None or position.index is None:
+            raise ValueError("on-board position requires route and index")
+
+        route = position.route
+        index = position.index
+        entry_route = position.entry_route
+
+        if position.physical_cell == Cell.HOME:
+            target_index = len(ROUTES[route]) - 2
+            destination = Position.at(
+                route,
+                target_index,
+                entry_route=entry_route,
+            )
+        elif route == Route.OUTER and index == 1:
+            destination = Position.home(Route.OUTER)
+        elif route == Route.C1_DIAGONAL and index == 0:
+            destination = Position.at(Route.OUTER, 4)
+        elif route == Route.C2_DIAGONAL and index == 0:
+            destination = Position.at(Route.OUTER, 9)
+        elif route == Route.CENTER_TO_HOME and index == 0:
+            _validate_center_entry_route(entry_route)
+            predecessor_index = 2
+            destination = Position.at(entry_route, predecessor_index)
+        else:
+            target_index = index - 1
+            if target_index < 0:
+                raise ValueError(f"position has no backward destination: {position}")
+            destination = Position.at(
+                route,
+                target_index,
+                entry_route=entry_route,
+            )
+
+        return MoveResult(
+            position=destination,
+            landed_on_home=destination.physical_cell == Cell.HOME,
+            moved_backward=True,
+        )
+
+
+def _validate_center_entry_route(entry_route: Route | None) -> None:
+    if entry_route not in (Route.C1_DIAGONAL, Route.C2_DIAGONAL):
+        raise ValueError(
+            "CENTER_TO_HOME position requires C1_DIAGONAL or C2_DIAGONAL "
+            "entry_route"
         )
