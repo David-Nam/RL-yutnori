@@ -11,31 +11,51 @@
 최종 목표와 평가 조건은 다음과 같습니다.
 
 ```text
-opponent: project_rf_rule
+ruleset: full_backdo_v1
+opponent: common_rule_based
 대전 방식: 1:1
-선/후공: 무작위
+선/후공: paired seed에서 교환
 평가 판수: 5000판
 목표 승률: 60% 이상
 ```
 
-`project_rf_rule`은 별도 `project-RF-` 프로젝트의 Rule-based Agent 동작을
-이 환경에 포팅한 고정 평가 상대입니다. 완주, 상대 말 잡기, 새 말 출발,
-업기, 도착까지 남은 거리 등을 기준으로 action을 선택합니다.
+`common_rule_based`는 완주, 상대 말 잡기, 새 말 출발, 업기, 도착까지
+남은 거리를 고정 점수식으로 평가하는 최종 기준 상대입니다.
 
 ## Overview
 
 프로젝트는 다음 구성으로 나뉩니다.
 
 ```text
-yutnori/core       윷 결과, 보드 이동, 턴과 잡기 등 게임 규칙
-yutnori/env        Gymnasium 환경, observation, reward, action mask
-yutnori/agents     baseline 및 project-RF Rule-based Agent
-yutnori/training   PPO 환경 factory, 평가, reward shaping
-yutnori/eval       agent 간 tournament 도구
-scripts            PPO 학습, sweep, 공식 평가 실행 스크립트
-tests              규칙, 환경, agent, 학습 경로 회귀 테스트
-docs               설계, 단계별 계획, 실험 결과 보고서
+RL-yutnori/
+├── bests/
+│   ├── ppo_common_rule_40m_subproc/       이전 규칙의 40M PPO 모델
+│   └── ppo_common_rule_50m_backdo_subproc/
+│       └── .../                           최종 모델, config, 평가 결과, checksum
+├── docs/
+│   ├── PROJECT_REPORT.md                  통합 최종 보고서 원문
+│   ├── RULES.md                           게임 및 공통 평가 규칙
+│   └── 윷놀이 강화학습 프로젝트 제안서.pdf
+├── scripts/
+│   ├── train_ppo.py                       MaskablePPO 학습
+│   ├── evaluate_common_rule.py            공통 paired 평가
+│   ├── evaluate_project_rf_common.py      project-RF 모델 공통 평가
+│   └── run_common_rule_50m_backdo_training.sh
+├── tests/                                 규칙·환경·학습·평가 회귀 테스트
+├── yutnori/
+│   ├── agents/                            baseline 및 checkpoint adapter
+│   ├── core/                              윷 결과, 보드, 게임 규칙
+│   ├── env/                               Gymnasium 환경과 action mask
+│   ├── eval/                              tournament와 직접 대전
+│   └── training/                          PPO 환경, 평가, reward shaping
+├── pyproject.toml                         pytest 설정
+├── requirements.txt                      Python 의존성
+└── README.md
 ```
+
+학습 시 생성되는 `runs/`, `logs/`, `checkpoints/`는 용량이 큰 원시
+산출물이므로 Git에서 제외합니다. 대표 모델과 최종 수치를 검증하는 config,
+summary, evaluation JSON, checksum은 `bests/`에 보관합니다.
 
 PPO는 legal action만 선택하도록 action mask를 사용합니다. 평가 결과에서도
 illegal action이 발생하지 않았는지 별도로 기록합니다.
@@ -199,28 +219,41 @@ prior는 복제 환경의 다음 윷 결과를 볼 수 있어 공통 가이드�
 최종 평가는 실제 RNG를 복사하지 않고 고정 확률의 기대 반격값을 사용하는
 compliant adapter로 실행했습니다.
 
-자세한 내용은
-[project-RF 공통 환경 교차 평가](docs/PROJECT_RF_CROSS_ENV_EVALUATION.md)에
-정리했습니다.
-
-자세한 분석은 [팀 회의 보고서](docs/RF_PPO_TEAM_MEETING_REPORT.md)와
-[개발 계획 및 진행 기록](docs/RF_RULE_BASED_PPO_PLAN.md)에서 확인할 수
-있습니다.
+설계, 학습 과정과 비교 결과는
+[통합 최종 보고서](docs/PROJECT_REPORT.md)에 정리했습니다.
 
 ## Current Status
 
-공통 opponent 40M 재학습까지 완료했습니다. 현재 최고 pure PPO 후보는
-seed 1의 `60.46%`이고, seed 2도 `60.40%`로 통과했습니다.
+전체 뒷도 규칙에서 공통 opponent를 상대로 seed별 50M 학습을 완료했습니다.
+공식 paired 평가에서 세 seed 모두 60% point threshold를 통과했습니다.
 
 ```text
-현재 판단: 공통 기준 통과 pure PPO 후보 확보
-다음 검증: 32M, 36M, 40M checkpoint 공통 평가
-후속 판단: margin 확대 실패 시 hybrid 또는 observation 개선
+3-seed 공식 합산: 60.72% (9,108 / 15,000)
+대표 모델: seed 2 final 50M
+대표 모델 독립 평가 합산: 61.25% (9,187 / 15,000)
+Wilson 95% CI: 60.46%~62.02%
+illegal actions / evaluation errors: 0 / 0
 ```
 
-seed 0은 `58.42%`로 미달했고, 3-seed 평균도 아직 60% 바로 아래입니다.
-따라서 최종 제출 후보는 seed 1 또는 seed 2로 둘 수 있지만, 더 안전한
-margin을 확보하기 위해 저장된 후반 checkpoint를 먼저 비교합니다.
+## Project Artifacts
+
+최종 모델은 `full_backdo_v1` 규칙에서 `common_rule_based`를 상대로
+50,003,968 timesteps 학습한 seed 2 MaskablePPO입니다. 공식 paired
+5,000판 평가에서 `61.08%`, 별도 seed 구간의 독립 재평가에서 `60.62%`를
+기록했으며 두 평가 모두 illegal action과 evaluation error는 0건입니다.
+
+| 산출물 | 설명 |
+| --- | --- |
+| [최종 학습 모델 다운로드](bests/ppo_common_rule_50m_backdo_subproc/common_rule_based_seed_2_50m_nenv32_tactical/model.zip?raw=1) | 실행 가능한 MaskablePPO checkpoint |
+| [모델 설명](bests/ppo_common_rule_50m_backdo_subproc/common_rule_based_seed_2_50m_nenv32_tactical/RELEASE.md) | 모델 구성과 주요 평가 결과 |
+| [학습 설정](bests/ppo_common_rule_50m_backdo_subproc/common_rule_based_seed_2_50m_nenv32_tactical/config.json) | hyperparameter, 환경, 학습 seed |
+| [학습 결과 요약](bests/ppo_common_rule_50m_backdo_subproc/common_rule_based_seed_2_50m_nenv32_tactical/summary.json) | 학습량과 episode 통계 |
+| [공식 5,000판 평가 결과](bests/ppo_common_rule_50m_backdo_subproc/common_rule_based_seed_2_50m_nenv32_tactical/eval_common_rule_paired_full_backdo_5000.json) | 승률 61.08%, 3,054승 1,946패 |
+| [독립 5,000판 재평가 결과](bests/ppo_common_rule_50m_backdo_subproc/common_rule_based_seed_2_50m_nenv32_tactical/eval_common_rule_paired_full_backdo_confirmation_5000.json) | 승률 60.62%, 3,031승 1,969패 |
+| [SHA-256 checksum](bests/ppo_common_rule_50m_backdo_subproc/common_rule_based_seed_2_50m_nenv32_tactical/SHA256SUMS) | 모델 및 결과 파일 무결성 검증 |
+| [프로젝트 최종 보고서](docs/PROJECT_REPORT.md) | 주제, 설계, 구현, 실험 과정과 결과 |
+| [게임 및 평가 규칙](docs/RULES.md) | 보드, 뒷도, action, 공통 평가 규칙 |
+| [프로젝트 제안서](docs/윷놀이%20강화학습%20프로젝트%20제안서.pdf) | 초기 프로젝트 주제와 계획 |
 
 ## Setup
 
@@ -322,6 +355,26 @@ logs/ppo_common_rule_50m_backdo_subproc
 
 ## Evaluation
 
+### Evaluate the Released Model
+
+공개된 대표 모델을 CPU에서 공통 paired 조건으로 다시 평가하려면 다음
+명령을 사용합니다.
+
+```bash
+.venv/bin/python scripts/evaluate_common_rule.py \
+  --model-path bests/ppo_common_rule_50m_backdo_subproc/common_rule_based_seed_2_50m_nenv32_tactical/model.zip \
+  --training-seed 2 \
+  --device cpu \
+  --output runs/released_model_eval.json
+```
+
+모델의 SHA-256 값과 함께 제공된 파일을 검증할 수 있습니다.
+
+```bash
+cd bests/ppo_common_rule_50m_backdo_subproc/common_rule_based_seed_2_50m_nenv32_tactical
+shasum -a 256 -c SHA256SUMS
+```
+
 저장된 PPO 모델을 공통 paired 조건으로 평가하려면 다음 명령을 사용합니다.
 
 ```bash
@@ -360,13 +413,3 @@ checkpoint의 원래 입력·출력 shape를 유지합니다.
 저장됩니다. project-RF tactical prior는 평가 RNG를 복사하지 않는 compliant
 기대값 방식이며, `--project-rf-network-only`로 보조 network-only 평가를
 분리할 수 있습니다.
-
-## Documentation
-
-- [RF PPO 팀 회의 보고서](docs/RF_PPO_TEAM_MEETING_REPORT.md)
-- [RF 대응 PPO 개발 계획 및 진행 기록](docs/RF_RULE_BASED_PPO_PLAN.md)
-- [project-RF 공통 환경 교차 평가](docs/PROJECT_RF_CROSS_ENV_EVALUATION.md)
-- [윷놀이 규칙](docs/RULES.md)
-- [강화학습 설계](docs/RL_DESIGN.md)
-- [보드 설계](docs/BOARD_DESIGN.md)
-- [전체 뒷도 50M 구현 계획](docs/FULL_BACKDO_50M_IMPLEMENTATION_PLAN.md)
